@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# uv
+.uv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Type checking
+.pyright/
+.mypy_cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Telegram session files (should use session string instead)
+*.session
+*.session-journal
+
+# Last check timestamp
+.last_check
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

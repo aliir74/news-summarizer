@@ -1,0 +1,59 @@
+[project]
+name = "news-summarizer"
+version = "0.1.0"
+description = "Telegram Persian News Summarizer Bot - monitors news channels and posts AI-generated summaries"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyrogram>=2.0",
+    "tgcrypto>=1.2",
+    "openai>=1.0",
+    "apscheduler>=3.10",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.23",
+    "pyright>=1.1",
+    "ruff>=0.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+include = ["src"]
+exclude = ["tests", ".venv"]
+# Pyrogram doesn't have complete type stubs
+reportMissingImports = false
+reportPrivateImportUsage = false
+reportGeneralTypeIssues = "warning"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
