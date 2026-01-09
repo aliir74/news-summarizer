@@ -64,13 +64,15 @@ class Summarizer:
                 logger.error("Empty response from LLM")
                 return None
 
-            # Get unique channel names
+            # Get unique channel names and usernames
             channels = list({msg.channel_title for msg in messages})
+            channel_usernames = list({msg.channel_username for msg in messages})
 
             return Summary(
                 content=content,
                 source_count=len(messages),
                 channels=channels,
+                channel_usernames=channel_usernames,
             )
 
         except Exception as e:

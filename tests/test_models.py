@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from src.models import Message, Summary
+from src.models import TEHRAN_TZ, Message, Summary
 
 
 class TestMessage:
@@ -95,11 +95,14 @@ class TestSummary:
 
     def test_format_for_telegram(self) -> None:
         """Test formatting summary for Telegram posting."""
+        # Use Tehran timezone for created_at so output matches expected time
+        tehran_time = datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ)
         summary = Summary(
             content="خلاصه اخبار تست",
             source_count=3,
             channels=["Channel A", "Channel B"],
-            created_at=datetime(2024, 1, 15, 11, 0),
+            channel_usernames=["channel_a", "channel_b"],
+            created_at=tehran_time,
         )
 
         formatted = summary.format_for_telegram()
@@ -107,10 +110,15 @@ class TestSummary:
         # Check header elements
         assert "📰" in formatted
         assert "خلاصه اخبار" in formatted
-        assert "2024-01-15 11:00" in formatted
+        assert "2024-01-15 14:30" in formatted
+        assert "(Tehran)" in formatted
         assert "📊" in formatted
         assert "3 خبر" in formatted
         assert "2 کانال" in formatted
+        # Check source channels
+        assert "📡 منابع:" in formatted
+        assert "@channel_a" in formatted
+        assert "@channel_b" in formatted
         # Check content
         assert "خلاصه اخبار تست" in formatted
         # Check separator
