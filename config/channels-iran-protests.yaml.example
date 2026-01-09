@@ -1,0 +1,70 @@
+# Iran Protest News Channels - Example Configuration
+# Copy relevant channels to channels.yaml to enable monitoring
+#
+# See docs/iran-protest-news-sources.md for detailed analysis
+
+channels:
+  # ============================================
+  # TIER 1: RECOMMENDED - High Quality Persian News
+  # ============================================
+
+  # Iran International (Persian) - ~895K subscribers
+  # 24-hour Persian news network, London-based
+  # Best for: Comprehensive protest coverage, breaking news
+  - iranintltv
+
+  # BBC Persian - ~766K subscribers
+  # Official BBC Persian service
+  # Best for: Verified reporting, balanced coverage
+  - bbcpersian
+
+  # VOA Farsi - Voice of America Persian
+  # US government-funded, editorially independent
+  # Best for: US perspective, diaspora news
+  - farsivoa
+
+  # ============================================
+  # TIER 1: RECOMMENDED - English Language
+  # ============================================
+
+  # Iran International English
+  # English version of iranintltv
+  # Best for: English summaries of Persian news
+  - IranIntl_En
+
+  # ============================================
+  # TIER 2: OPTIONAL - Additional Sources
+  # ============================================
+
+  # Radio Farda - RFE/RL Persian service
+  # ⚠️ WARNING: Operations may be suspended (March 2025 USAGM cuts)
+  # Verify operational status before enabling
+  # - radiofarda
+
+  # ============================================
+  # TIER 3: STATE MEDIA (for official perspective)
+  # ============================================
+
+  # Press TV - Iranian state English news
+  # Note: Represents Iranian government perspective
+  # - presstv
+
+  # IRNA English - Islamic Republic News Agency
+  # Note: Official state news agency
+  # - Irna_en
+
+# ============================================
+# NOTES
+# ============================================
+#
+# Message Volume Expectations:
+# - iranintltv: 50-100+ messages/day during major events
+# - bbcpersian: 30-50 messages/day
+# - IranIntl_En: 20-30 messages/day
+#
+# Language:
+# - Persian channels (iranintltv, bbcpersian, farsivoa) post in Persian
+# - English channels (IranIntl_En) post in English
+#
+# Your Telegram account must be able to access these channels.
+# Public channels don't require membership.
