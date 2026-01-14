@@ -9,7 +9,7 @@ import feedparser
 import httpx
 
 from src.config import Config, RSSFeed
-from src.models import Message
+from src.models import Message, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,7 @@ class RSSReader:
                         text=text,
                         timestamp=entry_aware.replace(tzinfo=None),
                         url=link,
+                        source_type=SourceType.RSS,
                     )
                 )
 

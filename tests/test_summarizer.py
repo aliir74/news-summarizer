@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.config import Config
-from src.models import Message
+from src.models import Message, SourceType
 from src.summarizer import SUMMARIZATION_PROMPT, Summarizer
 
 
@@ -150,3 +150,51 @@ class TestSummarizer:
         assert summary is not None
         assert len(summary.channels) == 1
         assert summary.channels[0] == "Same Channel"
+
+    def test_sources_field_populated_with_mixed_types(
+        self, summarizer: Summarizer
+    ) -> None:
+        """Test that sources field is populated with correct source types."""
+        messages = [
+            Message(
+                id=1,
+                channel_username="telegram_channel",
+                channel_title="Telegram Channel",
+                text="Message from Telegram",
+                timestamp=datetime.now(),
+                source_type=SourceType.TELEGRAM,
+            ),
+            Message(
+                id=2,
+                channel_username="RSS Feed",
+                channel_title="RSS Feed",
+                text="Message from RSS",
+                timestamp=datetime.now(),
+                url="https://example.com/article",
+                source_type=SourceType.RSS,
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Summary"
+
+        with patch.object(
+            summarizer._client.chat.completions, "create", return_value=mock_response
+        ):
+            summary = summarizer.summarize_news(messages)
+
+        assert summary is not None
+        assert len(summary.sources) == 2
+
+        # Check Telegram source
+        telegram_source = next(
+            s for s in summary.sources if s.source_type == SourceType.TELEGRAM
+        )
+        assert telegram_source.name == "telegram_channel"
+        assert telegram_source.domain == ""
+
+        # Check RSS source
+        rss_source = next(s for s in summary.sources if s.source_type == SourceType.RSS)
+        assert rss_source.name == "RSS Feed"
+        assert rss_source.domain == "example.com"

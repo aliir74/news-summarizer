@@ -5,8 +5,8 @@ telegram_channels:
 
 # RSS feeds for international news
 rss_feeds:
-  - name: "Reuters Middle East"
-    url: "https://www.reutersagency.com/feed/?best-regions=middle-east&post_type=best"
+  - name: "Reuters Middle East (via Google News)"
+    url: "https://news.google.com/rss/search?q=site:reuters.com+middle+east&ceid=US:en&hl=en-US&gl=US"
 
   - name: "BBC Persian"
     url: "https://feeds.bbci.co.uk/persian/rss.xml"

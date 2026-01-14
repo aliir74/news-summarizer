@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from src.config import Config, RSSFeed
+from src.models import SourceType
 from src.rss_reader import RSSReader, _extract_entry_text, _parse_entry_time
 
 
@@ -61,6 +62,26 @@ class TestRSSReader:
             assert messages[0].channel_username == "Test Feed"
             assert "Iran" in messages[0].text
             assert messages[0].url == "https://example.com/article1"
+
+    async def test_get_feed_updates_sets_rss_source_type(
+        self, sample_config: Config, sample_rss_feed: RSSFeed, sample_rss_xml: str
+    ) -> None:
+        """Test that RSS messages have source_type set to RSS."""
+        reader = RSSReader(sample_config)
+
+        mock_response = MagicMock()
+        mock_response.text = sample_rss_xml
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(reader, "_client") as mock_client:
+            mock_client.get = AsyncMock(return_value=mock_response)
+            reader._client = mock_client
+
+            since = datetime(2024, 1, 1)
+            messages = await reader.get_feed_updates(sample_rss_feed, since)
+
+            for msg in messages:
+                assert msg.source_type == SourceType.RSS
 
     async def test_get_feed_updates_filters_by_date(
         self, sample_config: Config, sample_rss_feed: RSSFeed, sample_rss_xml: str

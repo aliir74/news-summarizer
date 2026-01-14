@@ -1,6 +1,8 @@
 """Tests for configuration loading."""
 
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -36,7 +38,10 @@ class TestConfig:
         assert config.openrouter_api_key == "test_key"
         assert config.channels == ["channel1", "channel2"]
 
-    def test_config_missing_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @patch("src.config.load_dotenv")
+    def test_config_missing_env_var(
+        self, mock_load_dotenv: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test error when required env var is missing."""
         # Only set some env vars
         monkeypatch.setenv("TELEGRAM_API_ID", "12345")
