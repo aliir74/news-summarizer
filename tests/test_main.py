@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config import Config
-from src.main import LAST_CHECK_FILE, NewsSummarizer
+from src.main import LAST_CHECK_FILE, MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer
 
 
 @pytest.fixture
@@ -216,9 +216,156 @@ class TestNewsSummarizer:
         assert not check_file.exists()
 
 
+class TestSeenUrls:
+    """Tests for seen URLs deduplication."""
+
+    def test_load_seen_urls_file_exists(
+        self, news_summarizer: NewsSummarizer, tmp_path: Path
+    ) -> None:
+        """Test loading seen URLs from file."""
+        seen_urls = ["https://example.com/article1", "https://example.com/article2"]
+        urls_file = tmp_path / ".seen_urls"
+        urls_file.write_text(json.dumps({"urls": seen_urls}))
+
+        with patch("src.main.SEEN_URLS_FILE", urls_file):
+            news_summarizer._load_seen_urls()
+
+        assert news_summarizer._seen_urls == set(seen_urls)
+
+    def test_load_seen_urls_file_not_exists(self, news_summarizer: NewsSummarizer) -> None:
+        """Test loading seen URLs when file doesn't exist."""
+        with patch("src.main.SEEN_URLS_FILE", Path("/nonexistent/.seen_urls")):
+            news_summarizer._load_seen_urls()
+
+        assert news_summarizer._seen_urls == set()
+
+    def test_load_seen_urls_invalid_json(
+        self, news_summarizer: NewsSummarizer, tmp_path: Path
+    ) -> None:
+        """Test loading seen URLs with invalid JSON."""
+        urls_file = tmp_path / ".seen_urls"
+        urls_file.write_text("invalid json")
+
+        with patch("src.main.SEEN_URLS_FILE", urls_file):
+            news_summarizer._load_seen_urls()
+
+        assert news_summarizer._seen_urls == set()
+
+    def test_save_seen_urls(
+        self, news_summarizer: NewsSummarizer, tmp_path: Path
+    ) -> None:
+        """Test saving seen URLs to file."""
+        urls_file = tmp_path / ".seen_urls"
+        news_summarizer._seen_urls = {"https://example.com/article1", "https://example.com/article2"}
+
+        with patch("src.main.SEEN_URLS_FILE", urls_file):
+            news_summarizer._save_seen_urls()
+
+        assert urls_file.exists()
+        data = json.loads(urls_file.read_text())
+        assert "urls" in data
+        assert set(data["urls"]) == news_summarizer._seen_urls
+
+    def test_save_seen_urls_limits_size(
+        self, news_summarizer: NewsSummarizer, tmp_path: Path
+    ) -> None:
+        """Test that saving seen URLs limits to MAX_SEEN_URLS."""
+        urls_file = tmp_path / ".seen_urls"
+        # Create more URLs than the max
+        news_summarizer._seen_urls = {f"https://example.com/article{i}" for i in range(MAX_SEEN_URLS + 100)}
+
+        with patch("src.main.SEEN_URLS_FILE", urls_file):
+            news_summarizer._save_seen_urls()
+
+        data = json.loads(urls_file.read_text())
+        assert len(data["urls"]) == MAX_SEEN_URLS
+
+    async def test_summarize_job_passes_seen_urls_to_rss_reader(
+        self, news_summarizer: NewsSummarizer, sample_messages: list, sample_summary: MagicMock
+    ) -> None:
+        """Test that seen_urls are passed to the RSS reader."""
+        news_summarizer._seen_urls = {"https://old.example.com/article1"}
+
+        with (
+            patch.object(
+                news_summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=sample_messages,
+            ),
+            patch.object(
+                news_summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_rss,
+            patch.object(
+                news_summarizer.summarizer,
+                "summarize_news",
+                return_value=sample_summary,
+            ),
+            patch.object(
+                news_summarizer.bot, "post_summary", new_callable=AsyncMock, return_value=True
+            ),
+        ):
+            await news_summarizer._summarize_job()
+
+            # Verify seen_urls was passed to get_all_feed_updates
+            mock_rss.assert_called_once()
+            call_kwargs = mock_rss.call_args[1]
+            assert "seen_urls" in call_kwargs
+            assert call_kwargs["seen_urls"] == news_summarizer._seen_urls
+
+    async def test_summarize_job_adds_new_rss_urls_to_seen(
+        self, news_summarizer: NewsSummarizer, sample_rss_messages: list, sample_summary: MagicMock
+    ) -> None:
+        """Test that new RSS article URLs are added to seen_urls after processing."""
+        news_summarizer._seen_urls = set()
+
+        with (
+            patch.object(
+                news_summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(
+                news_summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=sample_rss_messages,
+            ),
+            patch.object(
+                news_summarizer.summarizer,
+                "summarize_news",
+                return_value=sample_summary,
+            ),
+            patch.object(
+                news_summarizer.bot, "post_summary", new_callable=AsyncMock, return_value=True
+            ),
+        ):
+            await news_summarizer._summarize_job()
+
+            # Only Iran-related messages are filtered and added
+            # Based on sample_rss_messages fixture, only the Iran message passes
+            assert len(news_summarizer._seen_urls) >= 1
+
+
 class TestLastCheckFile:
     """Tests for last check file path."""
 
     def test_last_check_file_path(self) -> None:
         """Test that LAST_CHECK_FILE is defined correctly."""
         assert LAST_CHECK_FILE == Path(".last_check")
+
+
+class TestSeenUrlsFile:
+    """Tests for seen URLs file path."""
+
+    def test_seen_urls_file_path(self) -> None:
+        """Test that SEEN_URLS_FILE is defined correctly."""
+        assert SEEN_URLS_FILE == Path(".seen_urls")
+
+    def test_max_seen_urls_constant(self) -> None:
+        """Test that MAX_SEEN_URLS is defined."""
+        assert MAX_SEEN_URLS == 1000
