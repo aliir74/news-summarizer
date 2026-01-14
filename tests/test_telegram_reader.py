@@ -4,6 +4,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pyrogram.errors import ChannelPrivate, UsernameNotOccupied
 
 from src.config import Config
 from src.telegram_reader import TelegramReader
@@ -170,8 +171,6 @@ class TestTelegramReader:
         self, reader: TelegramReader
     ) -> None:
         """Test handling of channel not found error."""
-        from pyrogram.errors import UsernameNotOccupied
-
         with patch("src.telegram_reader.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
@@ -189,8 +188,6 @@ class TestTelegramReader:
         self, reader: TelegramReader
     ) -> None:
         """Test handling of private channel error."""
-        from pyrogram.errors import ChannelPrivate
-
         with patch("src.telegram_reader.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()

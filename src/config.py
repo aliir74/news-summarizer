@@ -15,6 +15,28 @@ class ConfigError(Exception):
 
 
 @dataclass
+class RSSFeed:
+    """Configuration for an RSS feed source."""
+
+    name: str
+    url: str
+
+
+@dataclass
+class IranFilter:
+    """Configuration for Iran-related content filtering."""
+
+    enabled: bool = True
+    keywords: list[str] = field(default_factory=lambda: [
+        "iran",
+        "iranian",
+        "tehran",
+        "ایران",
+        "تهران",
+    ])
+
+
+@dataclass
 class Config:
     """Application configuration."""
 
@@ -32,8 +54,14 @@ class Config:
     summary_interval_minutes: int = 30
     llm_model: str = "google/gemma-2-9b-it"
 
-    # Channels to monitor
+    # Telegram channels to monitor
     channels: list[str] = field(default_factory=list)
+
+    # RSS feeds to monitor
+    rss_feeds: list[RSSFeed] = field(default_factory=list)
+
+    # Iran filter configuration
+    iran_filter: IranFilter = field(default_factory=IranFilter)
 
     @classmethod
     def from_env(cls, channels_file: str | Path | None = None) -> "Config":
@@ -54,14 +82,17 @@ class Config:
         if missing:
             raise ConfigError(f"Missing required environment variables: {', '.join(missing)}")
 
-        # Load channels from YAML file
+        # Load sources from YAML file
         channels: list[str] = []
+        rss_feeds: list[RSSFeed] = []
+        iran_filter = IranFilter()
+
         if channels_file is None:
             channels_file = Path("config/channels.yaml")
 
         channels_path = Path(channels_file)
         if channels_path.exists():
-            channels = _load_channels_yaml(channels_path)
+            channels, rss_feeds, iran_filter = _load_sources_yaml(channels_path)
 
         # Parse API ID as integer
         try:
@@ -79,26 +110,51 @@ class Config:
             summary_interval_minutes=int(os.getenv("SUMMARY_INTERVAL_MINUTES", "30")),
             llm_model=os.getenv("LLM_MODEL", "google/gemma-2-9b-it"),
             channels=channels,
+            rss_feeds=rss_feeds,
+            iran_filter=iran_filter,
         )
 
 
-def _load_channels_yaml(path: Path) -> list[str]:
-    """Load channel list from YAML file."""
+def _load_sources_yaml(path: Path) -> tuple[list[str], list[RSSFeed], IranFilter]:
+    """Load sources configuration from YAML file."""
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
 
-        if not data or "channels" not in data:
-            return []
+        if not data:
+            return [], [], IranFilter()
 
-        channels = data["channels"]
-        if not isinstance(channels, list):
-            return []
+        # Load Telegram channels (support both old 'channels' and new 'telegram_channels' keys)
+        channels: list[str] = []
+        raw_channels = data.get("telegram_channels") or data.get("channels") or []
+        if isinstance(raw_channels, list):
+            channels = [str(ch) for ch in raw_channels if ch is not None]
 
-        # Filter out None values and convert to strings
-        return [str(ch) for ch in channels if ch is not None]
+        # Load RSS feeds
+        rss_feeds: list[RSSFeed] = []
+        raw_feeds = data.get("rss_feeds") or []
+        if isinstance(raw_feeds, list):
+            for feed in raw_feeds:
+                if isinstance(feed, dict) and "name" in feed and "url" in feed:
+                    rss_feeds.append(RSSFeed(name=feed["name"], url=feed["url"]))
+
+        # Load Iran filter configuration
+        iran_filter = IranFilter()
+        raw_filter = data.get("iran_filter")
+        if isinstance(raw_filter, dict):
+            enabled = raw_filter.get("enabled", True)
+            keywords = raw_filter.get("keywords")
+            if isinstance(keywords, list):
+                iran_filter = IranFilter(
+                    enabled=bool(enabled),
+                    keywords=[str(k) for k in keywords if k is not None],
+                )
+            else:
+                iran_filter = IranFilter(enabled=bool(enabled))
+
+        return channels, rss_feeds, iran_filter
 
     except yaml.YAMLError as e:
-        raise ConfigError(f"Invalid YAML in channels file: {e}") from e
+        raise ConfigError(f"Invalid YAML in sources file: {e}") from e
     except OSError as e:
-        raise ConfigError(f"Could not read channels file: {e}") from e
+        raise ConfigError(f"Could not read sources file: {e}") from e
