@@ -23,9 +23,11 @@ class TestNewsSummarizer:
     async def test_start_and_stop(self, news_summarizer: NewsSummarizer) -> None:
         """Test starting and stopping the summarizer."""
         with (
-            patch.object(news_summarizer.reader, "start", new_callable=AsyncMock),
+            patch.object(news_summarizer.telegram_reader, "start", new_callable=AsyncMock),
+            patch.object(news_summarizer.rss_reader, "start", new_callable=AsyncMock),
             patch.object(news_summarizer.bot, "start", new_callable=AsyncMock),
-            patch.object(news_summarizer.reader, "stop", new_callable=AsyncMock),
+            patch.object(news_summarizer.telegram_reader, "stop", new_callable=AsyncMock),
+            patch.object(news_summarizer.rss_reader, "stop", new_callable=AsyncMock),
             patch.object(news_summarizer.bot, "stop", new_callable=AsyncMock),
         ):
             await news_summarizer.start()
@@ -40,10 +42,16 @@ class TestNewsSummarizer:
         """Test the summarization job when messages are found."""
         with (
             patch.object(
-                news_summarizer.reader,
+                news_summarizer.telegram_reader,
                 "get_all_channel_updates",
                 new_callable=AsyncMock,
                 return_value=sample_messages,
+            ),
+            patch.object(
+                news_summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
             ),
             patch.object(
                 news_summarizer.summarizer,
@@ -56,16 +64,23 @@ class TestNewsSummarizer:
         ):
             await news_summarizer._summarize_job()
 
-            news_summarizer.reader.get_all_channel_updates.assert_called_once()
-            news_summarizer.summarizer.summarize_news.assert_called_once_with(sample_messages)
+            news_summarizer.telegram_reader.get_all_channel_updates.assert_called_once()
+            news_summarizer.rss_reader.get_all_feed_updates.assert_called_once()
+            news_summarizer.summarizer.summarize_news.assert_called_once()
             news_summarizer.bot.post_summary.assert_called_once_with(sample_summary)
 
     async def test_summarize_job_no_messages(self, news_summarizer: NewsSummarizer) -> None:
         """Test the summarization job when no messages are found."""
         with (
             patch.object(
-                news_summarizer.reader,
+                news_summarizer.telegram_reader,
                 "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(
+                news_summarizer.rss_reader,
+                "get_all_feed_updates",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -81,10 +96,16 @@ class TestNewsSummarizer:
         """Test the summarization job when summary generation fails."""
         with (
             patch.object(
-                news_summarizer.reader,
+                news_summarizer.telegram_reader,
                 "get_all_channel_updates",
                 new_callable=AsyncMock,
                 return_value=sample_messages,
+            ),
+            patch.object(
+                news_summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
             ),
             patch.object(
                 news_summarizer.summarizer,
@@ -96,6 +117,43 @@ class TestNewsSummarizer:
             await news_summarizer._summarize_job()
 
             mock_post.assert_not_called()
+
+    async def test_summarize_job_with_rss_messages(
+        self, news_summarizer: NewsSummarizer, sample_rss_messages: list, sample_summary: MagicMock
+    ) -> None:
+        """Test the summarization job with RSS messages."""
+        with (
+            patch.object(
+                news_summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(
+                news_summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=sample_rss_messages,
+            ),
+            patch.object(
+                news_summarizer.summarizer,
+                "summarize_news",
+                return_value=sample_summary,
+            ),
+            patch.object(
+                news_summarizer.bot, "post_summary", new_callable=AsyncMock, return_value=True
+            ),
+        ):
+            await news_summarizer._summarize_job()
+
+            # Iran filter should filter the messages
+            news_summarizer.summarizer.summarize_news.assert_called_once()
+            # Should only have Iran-related messages
+            # With keywords ["iran", "tehran"], only "Iran announces..." matches
+            # (word boundary prevents "Iranian" from matching "iran")
+            call_args = news_summarizer.summarizer.summarize_news.call_args[0][0]
+            assert len(call_args) == 1
+            assert "Iran" in call_args[0].text
 
     def test_load_last_check_file_exists(
         self, news_summarizer: NewsSummarizer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

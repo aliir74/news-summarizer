@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config, ConfigError, _load_channels_yaml
+from src.config import Config, ConfigError, IranFilter, _load_sources_yaml
 
 
 class TestConfig:
@@ -112,33 +112,48 @@ class TestConfig:
         assert config.llm_model == "anthropic/claude-3-haiku"
 
 
-class TestLoadChannelsYaml:
-    """Tests for channel YAML loading."""
+class TestLoadSourcesYaml:
+    """Tests for sources YAML loading."""
 
-    def test_load_valid_yaml(self, tmp_path: Path) -> None:
-        """Test loading valid YAML file."""
+    def test_load_valid_yaml_old_format(self, tmp_path: Path) -> None:
+        """Test loading valid YAML file with old channels format."""
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels:\n  - channel1\n  - channel2\n  - channel3\n")
 
-        channels = _load_channels_yaml(channels_file)
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2", "channel3"]
+        assert rss_feeds == []
+        assert iran_filter.enabled is True
+
+    def test_load_valid_yaml_new_format(self, tmp_path: Path) -> None:
+        """Test loading valid YAML file with new telegram_channels format."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "telegram_channels:\n  - channel1\n  - channel2\n"
+        )
+
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+
+        assert channels == ["channel1", "channel2"]
 
     def test_load_empty_yaml(self, tmp_path: Path) -> None:
         """Test loading empty YAML file."""
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("")
 
-        channels = _load_channels_yaml(channels_file)
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
 
         assert channels == []
+        assert rss_feeds == []
+        assert isinstance(iran_filter, IranFilter)
 
     def test_load_yaml_no_channels_key(self, tmp_path: Path) -> None:
         """Test loading YAML without channels key."""
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("other_key: value\n")
 
-        channels = _load_channels_yaml(channels_file)
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
 
         assert channels == []
 
@@ -147,7 +162,7 @@ class TestLoadChannelsYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels:\n  - channel1\n  - \n  - channel2\n")
 
-        channels = _load_channels_yaml(channels_file)
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2"]
 
@@ -157,7 +172,7 @@ class TestLoadChannelsYaml:
         channels_file.write_text("invalid: yaml: content: [")
 
         with pytest.raises(ConfigError) as exc_info:
-            _load_channels_yaml(channels_file)
+            _load_sources_yaml(channels_file)
 
         assert "Invalid YAML" in str(exc_info.value)
 
@@ -166,6 +181,90 @@ class TestLoadChannelsYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels: not_a_list\n")
 
-        channels = _load_channels_yaml(channels_file)
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
 
         assert channels == []
+
+    def test_load_rss_feeds(self, tmp_path: Path) -> None:
+        """Test loading RSS feeds from YAML."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "rss_feeds:\n"
+            "  - name: Feed One\n"
+            "    url: https://example.com/feed1.xml\n"
+            "  - name: Feed Two\n"
+            "    url: https://example.com/feed2.xml\n"
+        )
+
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+
+        assert len(rss_feeds) == 2
+        assert rss_feeds[0].name == "Feed One"
+        assert rss_feeds[0].url == "https://example.com/feed1.xml"
+        assert rss_feeds[1].name == "Feed Two"
+
+    def test_load_rss_feeds_invalid_format(self, tmp_path: Path) -> None:
+        """Test that invalid RSS feed entries are skipped."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "rss_feeds:\n"
+            "  - name: Valid Feed\n"
+            "    url: https://example.com/feed.xml\n"
+            "  - name: Missing URL\n"  # Missing url
+            "  - url: https://example.com/no-name.xml\n"  # Missing name
+        )
+
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+
+        assert len(rss_feeds) == 1
+        assert rss_feeds[0].name == "Valid Feed"
+
+    def test_load_iran_filter(self, tmp_path: Path) -> None:
+        """Test loading Iran filter configuration."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "iran_filter:\n"
+            "  enabled: true\n"
+            "  keywords:\n"
+            "    - iran\n"
+            "    - tehran\n"
+        )
+
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+
+        assert iran_filter.enabled is True
+        assert iran_filter.keywords == ["iran", "tehran"]
+
+    def test_load_iran_filter_disabled(self, tmp_path: Path) -> None:
+        """Test loading disabled Iran filter."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "iran_filter:\n"
+            "  enabled: false\n"
+        )
+
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+
+        assert iran_filter.enabled is False
+
+    def test_load_full_config(self, tmp_path: Path) -> None:
+        """Test loading full configuration with all sections."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "telegram_channels:\n"
+            "  - channel1\n"
+            "rss_feeds:\n"
+            "  - name: Test Feed\n"
+            "    url: https://example.com/feed.xml\n"
+            "iran_filter:\n"
+            "  enabled: true\n"
+            "  keywords:\n"
+            "    - iran\n"
+        )
+
+        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+
+        assert channels == ["channel1"]
+        assert len(rss_feeds) == 1
+        assert iran_filter.enabled is True
+        assert iran_filter.keywords == ["iran"]

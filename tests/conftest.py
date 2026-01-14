@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.config import Config
+from src.config import Config, IranFilter, RSSFeed
 from src.models import Message, Summary
 
 
@@ -22,6 +22,10 @@ def sample_config() -> Config:
         summary_interval_minutes=30,
         llm_model="google/gemma-2-9b-it",
         channels=["channel1", "channel2"],
+        rss_feeds=[
+            RSSFeed(name="Test Feed", url="https://example.com/feed.xml"),
+        ],
+        iran_filter=IranFilter(enabled=True, keywords=["iran", "tehran"]),
     )
 
 
@@ -96,3 +100,78 @@ def env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test_bot_token")
     monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@test_channel")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test_openrouter_key")
+
+
+@pytest.fixture
+def sample_rss_feed() -> RSSFeed:
+    """Create a sample RSS feed configuration for testing."""
+    return RSSFeed(name="Test Feed", url="https://example.com/feed.xml")
+
+
+@pytest.fixture
+def sample_iran_filter() -> IranFilter:
+    """Create a sample Iran filter configuration for testing."""
+    return IranFilter(enabled=True, keywords=["iran", "iranian", "tehran"])
+
+
+@pytest.fixture
+def sample_rss_messages() -> list[Message]:
+    """Create sample RSS feed messages for testing."""
+    return [
+        Message(
+            id=12345,
+            channel_username="Test Feed",
+            channel_title="Test Feed",
+            text="Iran announces new economic policy in Tehran",
+            timestamp=datetime(2024, 1, 15, 10, 30),
+            url="https://example.com/article1",
+        ),
+        Message(
+            id=67890,
+            channel_username="Test Feed",
+            channel_title="Test Feed",
+            text="Weather update for Paris today",
+            timestamp=datetime(2024, 1, 15, 10, 35),
+            url="https://example.com/article2",
+        ),
+        Message(
+            id=11111,
+            channel_username="Test Feed",
+            channel_title="Test Feed",
+            text="Iranian scientists make breakthrough",
+            timestamp=datetime(2024, 1, 15, 10, 40),
+            url="https://example.com/article3",
+        ),
+    ]
+
+
+@pytest.fixture
+def mock_httpx_client() -> MagicMock:
+    """Create a mock httpx AsyncClient."""
+    client = MagicMock()
+    client.get = AsyncMock()
+    client.aclose = AsyncMock()
+    return client
+
+
+@pytest.fixture
+def sample_rss_xml() -> str:
+    """Sample RSS feed XML for testing."""
+    return """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <item>
+      <title>Iran announces new policy</title>
+      <link>https://example.com/article1</link>
+      <description>Details about Iran's new economic policy.</description>
+      <pubDate>Mon, 15 Jan 2024 10:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Weather in Paris</title>
+      <link>https://example.com/article2</link>
+      <description>Sunny weather expected in Paris.</description>
+      <pubDate>Mon, 15 Jan 2024 10:35:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>"""

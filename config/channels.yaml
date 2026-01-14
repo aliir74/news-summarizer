@@ -1,13 +1,36 @@
-# List of Telegram channels to monitor for news
+# Telegram channels to monitor
 # Add channel usernames (without @) or channel IDs
-channels:
-  # Example Persian news channels (replace with actual channels you want to monitor)
-  - iraborsnews      # Example: IR bourse news
-  - kaborsnews       # Example: K bourse news
-  # Add more channels as needed:
-  # - channel_username_1
-  # - channel_username_2
-  # - channel_username_3
+telegram_channels:
+  - VahidOnline
 
-# Note: Your Telegram user account must be a member of these channels
-# to read their messages. Public channels don't require membership.
+# RSS feeds for international news
+rss_feeds:
+  - name: "Reuters Middle East"
+    url: "https://www.reutersagency.com/feed/?best-regions=middle-east&post_type=best"
+
+  - name: "BBC Persian"
+    url: "https://feeds.bbci.co.uk/persian/rss.xml"
+
+  - name: "Al Jazeera"
+    url: "https://www.aljazeera.com/xml/rss/all.xml"
+
+  - name: "New York Times World"
+    url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+
+  - name: "The Guardian World"
+    url: "https://www.theguardian.com/world/rss"
+
+# Iran filter configuration (only applied to RSS feeds)
+iran_filter:
+  enabled: true
+  keywords:
+    - "iran"
+    - "iranian"
+    - "tehran"
+    - "persia"
+    - "persian"
+    - "islamic republic"
+    - "ایران"
+    - "تهران"
+    - "ایرانی"
+    - "جمهوری اسلامی"

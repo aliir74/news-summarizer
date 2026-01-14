@@ -11,6 +11,8 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.config import Config, ConfigError
+from src.iran_filter import IranRelevanceFilter
+from src.rss_reader import RSSReader
 from src.summarizer import Summarizer
 from src.telegram_bot import TelegramBot
 from src.telegram_reader import TelegramReader
@@ -33,7 +35,9 @@ class NewsSummarizer:
     def __init__(self, config: Config) -> None:
         """Initialize the news summarizer with configuration."""
         self.config = config
-        self.reader = TelegramReader(config)
+        self.telegram_reader = TelegramReader(config)
+        self.rss_reader = RSSReader(config)
+        self.iran_filter = IranRelevanceFilter(config.iran_filter)
         self.bot = TelegramBot(config)
         self.summarizer = Summarizer(config)
         self.scheduler = AsyncIOScheduler()
@@ -47,8 +51,9 @@ class NewsSummarizer:
         # Load last check timestamp
         self._load_last_check()
 
-        # Start Telegram clients
-        await self.reader.start()
+        # Start clients
+        await self.telegram_reader.start()
+        await self.rss_reader.start()
         await self.bot.start()
 
         # Schedule the summarization job
@@ -65,7 +70,8 @@ class NewsSummarizer:
         logger.info(
             f"News summarizer started. Running every {self.config.summary_interval_minutes} minutes."
         )
-        logger.info(f"Monitoring {len(self.config.channels)} channels.")
+        logger.info(f"Monitoring {len(self.config.channels)} Telegram channels.")
+        logger.info(f"Monitoring {len(self.config.rss_feeds)} RSS feeds.")
 
     async def stop(self) -> None:
         """Stop the news summarizer."""
@@ -77,8 +83,9 @@ class NewsSummarizer:
         # Save last check timestamp
         self._save_last_check()
 
-        # Stop Telegram clients
-        await self.reader.stop()
+        # Stop clients
+        await self.telegram_reader.stop()
+        await self.rss_reader.stop()
         await self.bot.stop()
 
         logger.info("News summarizer stopped.")
@@ -93,9 +100,21 @@ class NewsSummarizer:
 
             logger.info(f"Fetching messages since {since}")
 
-            # Fetch messages from all channels
-            messages = await self.reader.get_all_channel_updates(since)
-            logger.info(f"Found {len(messages)} new messages")
+            # Fetch messages from Telegram channels
+            telegram_messages = await self.telegram_reader.get_all_channel_updates(since)
+            logger.info(f"Found {len(telegram_messages)} Telegram messages")
+
+            # Fetch and filter messages from RSS feeds
+            rss_messages = await self.rss_reader.get_all_feed_updates(since)
+            logger.info(f"Found {len(rss_messages)} RSS articles")
+
+            filtered_rss = self.iran_filter.filter_messages(rss_messages)
+            logger.info(f"Filtered to {len(filtered_rss)} Iran-related RSS articles")
+
+            # Merge all messages
+            messages = telegram_messages + filtered_rss
+            messages.sort(key=lambda m: m.timestamp, reverse=True)
+            logger.info(f"Total {len(messages)} messages to summarize")
 
             if messages:
                 # Generate summary
@@ -150,8 +169,8 @@ async def main() -> None:
         logger.error(f"Configuration error: {e}")
         sys.exit(1)
 
-    if not config.channels:
-        logger.warning("No channels configured. Check config/channels.yaml")
+    if not config.channels and not config.rss_feeds:
+        logger.warning("No sources configured. Check config/channels.yaml")
 
     summarizer = NewsSummarizer(config)
 
