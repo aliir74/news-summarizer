@@ -11,7 +11,9 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.config import Config, ConfigError
+from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
+from src.output_writer import OutputWriter
 from src.rss_reader import RSSReader
 from src.summarizer import Summarizer
 from src.telegram_bot import TelegramBot
@@ -24,9 +26,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
-
-# File for persisting last check timestamp
-LAST_CHECK_FILE = Path(".last_check")
 
 # File for persisting seen RSS article URLs (prevents duplicates)
 SEEN_URLS_FILE = Path(".seen_urls")
@@ -44,12 +43,23 @@ class NewsSummarizer:
         self.telegram_reader = TelegramReader(config)
         self.rss_reader = RSSReader(config)
         self.iran_filter = IranRelevanceFilter(config.iran_filter)
-        self.bot = TelegramBot(config)
+
+        # Select output writer based on test mode
+        self.output_writer: OutputWriter
+        if config.test_mode:
+            self.output_writer = FileWriter(config)
+            logger.info("Test mode enabled - writing output to file")
+        else:
+            self.output_writer = TelegramBot(config)
+
         self.summarizer = Summarizer(config)
         self.scheduler = AsyncIOScheduler()
         self._last_check: datetime | None = None
         self._seen_urls: set[str] = set()
         self._running = False
+
+        # State file path based on test mode
+        self._state_file = config.effective_state_file
 
     async def start(self) -> None:
         """Start the news summarizer."""
@@ -62,21 +72,23 @@ class NewsSummarizer:
         # Start clients
         await self.telegram_reader.start()
         await self.rss_reader.start()
-        await self.bot.start()
+        await self.output_writer.start()
 
         # Schedule the summarization job
         self.scheduler.add_job(
             self._summarize_job,
             "interval",
-            minutes=self.config.summary_interval_minutes,
+            minutes=self.config.effective_summary_interval_minutes,
             id="summarize_news",
             next_run_time=datetime.now(),  # Run immediately on start
         )
         self.scheduler.start()
 
         self._running = True
+        mode = "TEST" if self.config.test_mode else "PRODUCTION"
         logger.info(
-            f"News summarizer started. Running every {self.config.summary_interval_minutes} minutes."
+            f"News summarizer started in {mode} mode. "
+            f"Running every {self.config.effective_summary_interval_minutes} minutes."
         )
         logger.info(f"Monitoring {len(self.config.channels)} Telegram channels.")
         logger.info(f"Monitoring {len(self.config.rss_feeds)} RSS feeds.")
@@ -95,7 +107,7 @@ class NewsSummarizer:
         # Stop clients
         await self.telegram_reader.stop()
         await self.rss_reader.stop()
-        await self.bot.stop()
+        await self.output_writer.stop()
 
         logger.info("News summarizer stopped.")
 
@@ -104,7 +116,7 @@ class NewsSummarizer:
         try:
             # Determine the time window
             since = self._last_check or datetime.now() - timedelta(
-                minutes=self.config.summary_interval_minutes
+                minutes=self.config.effective_summary_interval_minutes
             )
 
             logger.info(f"Fetching messages since {since}")
@@ -132,8 +144,8 @@ class NewsSummarizer:
                 summary = self.summarizer.summarize_news(messages)
 
                 if summary:
-                    # Post to channel
-                    success = await self.bot.post_summary(summary)
+                    # Post summary (to Telegram or file based on mode)
+                    success = await self.output_writer.post_summary(summary)
                     if success:
                         logger.info("Summary posted successfully")
                     else:
@@ -158,9 +170,9 @@ class NewsSummarizer:
 
     def _load_last_check(self) -> None:
         """Load the last check timestamp from file."""
-        if LAST_CHECK_FILE.exists():
+        if self._state_file.exists():
             try:
-                data = json.loads(LAST_CHECK_FILE.read_text())
+                data = json.loads(self._state_file.read_text())
                 self._last_check = datetime.fromisoformat(data["last_check"])
                 logger.info(f"Loaded last check timestamp: {self._last_check}")
             except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -171,7 +183,7 @@ class NewsSummarizer:
         """Save the last check timestamp to file."""
         if self._last_check:
             try:
-                LAST_CHECK_FILE.write_text(
+                self._state_file.write_text(
                     json.dumps({"last_check": self._last_check.isoformat()})
                 )
             except OSError as e:

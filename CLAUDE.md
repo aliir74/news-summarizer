@@ -12,8 +12,11 @@ Telegram Persian News Summarizer Bot - A Python application that monitors Persia
 # Install dependencies
 uv sync --all-extras
 
-# Run application
+# Run application (production mode)
 uv run python -m src.main
+
+# Run application (test mode - writes to file, separate state)
+TEST_MODE=true uv run python -m src.main
 
 # Run tests
 uv run pytest
@@ -37,18 +40,20 @@ uv run pyright src
 - **RSSReader (rss_reader.py)** - Async HTTP client (httpx) with feedparser for fetching and parsing RSS/Atom feeds. Includes URL-based deduplication to prevent duplicate articles across runs.
 - **IranRelevanceFilter (iran_filter.py)** - Keyword-based filtering for Iran-related content with configurable keywords
 - **TelegramBot (telegram_bot.py)** - Pyrogram bot for posting summaries with smart message splitting (4096 char limit)
+- **FileWriter (file_writer.py)** - File output for test mode, writes summaries to text file
+- **OutputWriter (output_writer.py)** - Protocol defining output writer interface (TelegramBot/FileWriter)
 - **Summarizer (summarizer.py)** - OpenRouter API integration via OpenAI SDK for Persian summarization
-- **Config (config.py)** - Loads from environment variables + config/channels.yaml (supports Telegram channels, RSS feeds, Iran filter)
+- **Config (config.py)** - Loads from environment variables + config/channels.yaml (supports Telegram channels, RSS feeds, Iran filter, test mode)
 
 **Data Flow:**
-1. Scheduler triggers at configured interval (default: 30 min)
+1. Scheduler triggers at configured interval (default: 30 min production, 5 min test mode)
 2. TelegramReader fetches messages from monitored Telegram channels since last check
 3. RSSReader fetches articles from configured RSS feeds since last check (skips already-seen URLs)
 4. IranRelevanceFilter filters RSS articles for Iran-related content using keyword matching
 5. Messages from both sources are merged and sorted by timestamp
 6. Summarizer sends messages to LLM for Persian summary generation
-7. TelegramBot posts formatted summary to output channel
-8. State persisted: last-check timestamp to .last_check file, seen RSS URLs to .seen_urls file (max 1000 URLs)
+7. OutputWriter posts summary (TelegramBot in production, FileWriter in test mode)
+8. State persisted: last-check timestamp to state file (.last_check or .last_check.test), seen RSS URLs to .seen_urls file (max 1000 URLs)
 
 ## Code Style
 
@@ -68,6 +73,8 @@ Tests use pytest-asyncio with auto mode. Shared fixtures in tests/conftest.py in
 **Required:** TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING, TELEGRAM_BOT_TOKEN, OUTPUT_CHANNEL_ID, OPENROUTER_API_KEY
 
 **Optional:** SUMMARY_INTERVAL_MINUTES (default: 30), LLM_MODEL (default: google/gemma-2-9b-it)
+
+**Test Mode:** TEST_MODE (default: false), TEST_SUMMARY_INTERVAL_MINUTES (default: 5), TEST_OUTPUT_DIR (default: output), TEST_STATE_FILE (default: .last_check.test)
 
 Generate session string with: `uv run python scripts/generate_session.py`
 

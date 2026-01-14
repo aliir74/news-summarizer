@@ -1,0 +1,19 @@
+# Test mode configuration
+# Use smaller set of sources for faster testing
+
+telegram_channels:
+  - VahidOnline
+
+# Fewer RSS feeds for testing
+rss_feeds:
+  - name: "BBC Persian"
+    url: "https://feeds.bbci.co.uk/persian/rss.xml"
+
+# Iran filter for testing
+iran_filter:
+  enabled: true
+  keywords:
+    - "iran"
+    - "iranian"
+    - "tehran"
+    - "ایران"

@@ -5,10 +5,12 @@ A Python application that monitors Persian news Telegram channels, summarizes ne
 ## Features
 
 - Monitors multiple Telegram news channels using your user account
+- Monitors RSS feeds with keyword-based filtering for Iran-related news
 - Generates Persian summaries using OpenRouter LLM API
 - Posts summaries to a dedicated Telegram channel via bot
 - Configurable check interval (default: 30 minutes)
 - Persists last check timestamp to avoid duplicate summaries on restart
+- **Test mode** for local development (writes to file, separate state)
 - Deployable to Railway (free tier)
 
 ## Prerequisites
@@ -115,6 +117,32 @@ The bot will:
 
 Press `Ctrl+C` to stop gracefully.
 
+### Test Mode
+
+Test mode allows you to run the application locally without posting to Telegram. Instead, summaries are written to a text file and state is tracked separately from production.
+
+```bash
+# Run in test mode (writes to output/summaries.txt)
+TEST_MODE=true uv run python -m src.main
+
+# Customize test interval (default: 5 minutes)
+TEST_MODE=true TEST_SUMMARY_INTERVAL_MINUTES=1 uv run python -m src.main
+```
+
+Test mode features:
+- Writes summaries to `output/summaries.txt` instead of Telegram
+- Uses separate state file (`.last_check.test`) to keep test runs isolated
+- Uses `config/channels.test.yaml` if it exists (falls back to `channels.yaml`)
+- Shorter default interval (5 minutes vs 30 minutes)
+
+Test mode environment variables:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEST_MODE` | `false` | Enable test mode |
+| `TEST_SUMMARY_INTERVAL_MINUTES` | `5` | Summary interval in test mode |
+| `TEST_OUTPUT_DIR` | `output` | Directory for file output |
+| `TEST_STATE_FILE` | `.last_check.test` | State file path in test mode |
+
 ## Development
 
 ### Running Tests
@@ -175,14 +203,19 @@ news-summarizer/
 │   ├── main.py              # Entry point, scheduler setup
 │   ├── config.py            # Configuration loading
 │   ├── telegram_reader.py   # Pyrogram client for reading channels
+│   ├── rss_reader.py        # RSS/Atom feed reader
+│   ├── iran_filter.py       # Keyword-based content filtering
 │   ├── telegram_bot.py      # Bot for posting summaries
+│   ├── file_writer.py       # File output for test mode
+│   ├── output_writer.py     # Output writer protocol
 │   ├── summarizer.py        # OpenRouter LLM integration
 │   └── models.py            # Data models (Message, Summary)
 ├── tests/                   # Test suite
 ├── scripts/
 │   └── generate_session.py  # Session string generator
 ├── config/
-│   └── channels.yaml        # Channel list
+│   ├── channels.yaml        # Production channel list
+│   └── channels.test.yaml   # Test mode channel list
 ├── .github/workflows/       # CI/CD workflows
 ├── pyproject.toml          # Project configuration
 └── railway.toml            # Railway deployment config
