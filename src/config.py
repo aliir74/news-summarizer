@@ -63,10 +63,29 @@ class Config:
     # Iran filter configuration
     iran_filter: IranFilter = field(default_factory=IranFilter)
 
+    # Test mode settings
+    test_mode: bool = False
+    test_summary_interval_minutes: int = 5
+    test_output_dir: Path = field(default_factory=lambda: Path("output"))
+    test_state_file: Path = field(default_factory=lambda: Path(".last_check.test"))
+
+    @property
+    def effective_summary_interval_minutes(self) -> int:
+        """Return the appropriate interval based on test mode."""
+        return self.test_summary_interval_minutes if self.test_mode else self.summary_interval_minutes
+
+    @property
+    def effective_state_file(self) -> Path:
+        """Return the appropriate state file based on test mode."""
+        return self.test_state_file if self.test_mode else Path(".last_check")
+
     @classmethod
     def from_env(cls, channels_file: str | Path | None = None) -> "Config":
         """Load configuration from environment variables and channels file."""
         load_dotenv()
+
+        # Determine test mode first
+        test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
 
         # Required environment variables
         required_vars = [
@@ -87,8 +106,16 @@ class Config:
         rss_feeds: list[RSSFeed] = []
         iran_filter = IranFilter()
 
+        # Determine channels file based on test mode
         if channels_file is None:
-            channels_file = Path("config/channels.yaml")
+            if test_mode:
+                test_channels_path = Path("config/channels.test.yaml")
+                if test_channels_path.exists():
+                    channels_file = test_channels_path
+                else:
+                    channels_file = Path("config/channels.yaml")
+            else:
+                channels_file = Path("config/channels.yaml")
 
         channels_path = Path(channels_file)
         if channels_path.exists():
@@ -112,6 +139,10 @@ class Config:
             channels=channels,
             rss_feeds=rss_feeds,
             iran_filter=iran_filter,
+            test_mode=test_mode,
+            test_summary_interval_minutes=int(os.getenv("TEST_SUMMARY_INTERVAL_MINUTES", "5")),
+            test_output_dir=Path(os.getenv("TEST_OUTPUT_DIR", "output")),
+            test_state_file=Path(os.getenv("TEST_STATE_FILE", ".last_check.test")),
         )
 
 

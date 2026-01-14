@@ -8,13 +8,35 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config import Config
-from src.main import LAST_CHECK_FILE, MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer
+from src.file_writer import FileWriter
+from src.main import MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer
+from src.telegram_bot import TelegramBot
 
 
 @pytest.fixture
 def news_summarizer(sample_config: Config) -> NewsSummarizer:
     """Create a NewsSummarizer instance for testing."""
     return NewsSummarizer(sample_config)
+
+
+@pytest.fixture
+def test_mode_summarizer(sample_config: Config, tmp_path: Path) -> NewsSummarizer:
+    """Create a NewsSummarizer instance with test mode enabled."""
+    test_config = Config(
+        telegram_api_id=sample_config.telegram_api_id,
+        telegram_api_hash=sample_config.telegram_api_hash,
+        telegram_session_string=sample_config.telegram_session_string,
+        telegram_bot_token=sample_config.telegram_bot_token,
+        output_channel_id=sample_config.output_channel_id,
+        openrouter_api_key=sample_config.openrouter_api_key,
+        channels=sample_config.channels,
+        rss_feeds=sample_config.rss_feeds,
+        iran_filter=sample_config.iran_filter,
+        test_mode=True,
+        test_output_dir=tmp_path / "output",
+        test_state_file=tmp_path / ".last_check.test",
+    )
+    return NewsSummarizer(test_config)
 
 
 class TestNewsSummarizer:
@@ -25,10 +47,10 @@ class TestNewsSummarizer:
         with (
             patch.object(news_summarizer.telegram_reader, "start", new_callable=AsyncMock),
             patch.object(news_summarizer.rss_reader, "start", new_callable=AsyncMock),
-            patch.object(news_summarizer.bot, "start", new_callable=AsyncMock),
+            patch.object(news_summarizer.output_writer, "start", new_callable=AsyncMock),
             patch.object(news_summarizer.telegram_reader, "stop", new_callable=AsyncMock),
             patch.object(news_summarizer.rss_reader, "stop", new_callable=AsyncMock),
-            patch.object(news_summarizer.bot, "stop", new_callable=AsyncMock),
+            patch.object(news_summarizer.output_writer, "stop", new_callable=AsyncMock),
         ):
             await news_summarizer.start()
             assert news_summarizer._running is True
@@ -59,7 +81,10 @@ class TestNewsSummarizer:
                 return_value=sample_summary,
             ),
             patch.object(
-                news_summarizer.bot, "post_summary", new_callable=AsyncMock, return_value=True
+                news_summarizer.output_writer,
+                "post_summary",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
         ):
             await news_summarizer._summarize_job()
@@ -67,7 +92,7 @@ class TestNewsSummarizer:
             news_summarizer.telegram_reader.get_all_channel_updates.assert_called_once()
             news_summarizer.rss_reader.get_all_feed_updates.assert_called_once()
             news_summarizer.summarizer.summarize_news.assert_called_once()
-            news_summarizer.bot.post_summary.assert_called_once_with(sample_summary)
+            news_summarizer.output_writer.post_summary.assert_called_once_with(sample_summary)
 
     async def test_summarize_job_no_messages(self, news_summarizer: NewsSummarizer) -> None:
         """Test the summarization job when no messages are found."""
@@ -112,7 +137,9 @@ class TestNewsSummarizer:
                 "summarize_news",
                 return_value=None,
             ),
-            patch.object(news_summarizer.bot, "post_summary", new_callable=AsyncMock) as mock_post,
+            patch.object(
+                news_summarizer.output_writer, "post_summary", new_callable=AsyncMock
+            ) as mock_post,
         ):
             await news_summarizer._summarize_job()
 
@@ -141,7 +168,10 @@ class TestNewsSummarizer:
                 return_value=sample_summary,
             ),
             patch.object(
-                news_summarizer.bot, "post_summary", new_callable=AsyncMock, return_value=True
+                news_summarizer.output_writer,
+                "post_summary",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
         ):
             await news_summarizer._summarize_job()
@@ -156,7 +186,7 @@ class TestNewsSummarizer:
             assert "Iran" in call_args[0].text
 
     def test_load_last_check_file_exists(
-        self, news_summarizer: NewsSummarizer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, sample_config: Config, tmp_path: Path
     ) -> None:
         """Test loading last check timestamp from file."""
         # Create a temporary last check file
@@ -164,53 +194,108 @@ class TestNewsSummarizer:
         check_file = tmp_path / ".last_check"
         check_file.write_text(json.dumps({"last_check": last_check.isoformat()}))
 
-        # Patch the LAST_CHECK_FILE constant
-        with patch("src.main.LAST_CHECK_FILE", check_file):
-            news_summarizer._load_last_check()
+        # Create config with custom state file
+        config = Config(
+            telegram_api_id=sample_config.telegram_api_id,
+            telegram_api_hash=sample_config.telegram_api_hash,
+            telegram_session_string=sample_config.telegram_session_string,
+            telegram_bot_token=sample_config.telegram_bot_token,
+            output_channel_id=sample_config.output_channel_id,
+            openrouter_api_key=sample_config.openrouter_api_key,
+            test_mode=True,
+            test_state_file=check_file,
+        )
 
-        assert news_summarizer._last_check == last_check
+        summarizer = NewsSummarizer(config)
+        summarizer._load_last_check()
 
-    def test_load_last_check_file_not_exists(self, news_summarizer: NewsSummarizer) -> None:
+        assert summarizer._last_check == last_check
+
+    def test_load_last_check_file_not_exists(self, sample_config: Config, tmp_path: Path) -> None:
         """Test loading last check when file doesn't exist."""
-        with patch("src.main.LAST_CHECK_FILE", Path("/nonexistent/.last_check")):
-            news_summarizer._load_last_check()
+        config = Config(
+            telegram_api_id=sample_config.telegram_api_id,
+            telegram_api_hash=sample_config.telegram_api_hash,
+            telegram_session_string=sample_config.telegram_session_string,
+            telegram_bot_token=sample_config.telegram_bot_token,
+            output_channel_id=sample_config.output_channel_id,
+            openrouter_api_key=sample_config.openrouter_api_key,
+            test_mode=True,
+            test_state_file=tmp_path / "nonexistent" / ".last_check",
+        )
 
-        assert news_summarizer._last_check is None
+        summarizer = NewsSummarizer(config)
+        summarizer._load_last_check()
+
+        assert summarizer._last_check is None
 
     def test_load_last_check_invalid_json(
-        self, news_summarizer: NewsSummarizer, tmp_path: Path
+        self, sample_config: Config, tmp_path: Path
     ) -> None:
         """Test loading last check with invalid JSON."""
         check_file = tmp_path / ".last_check"
         check_file.write_text("invalid json")
 
-        with patch("src.main.LAST_CHECK_FILE", check_file):
-            news_summarizer._load_last_check()
+        config = Config(
+            telegram_api_id=sample_config.telegram_api_id,
+            telegram_api_hash=sample_config.telegram_api_hash,
+            telegram_session_string=sample_config.telegram_session_string,
+            telegram_bot_token=sample_config.telegram_bot_token,
+            output_channel_id=sample_config.output_channel_id,
+            openrouter_api_key=sample_config.openrouter_api_key,
+            test_mode=True,
+            test_state_file=check_file,
+        )
 
-        assert news_summarizer._last_check is None
+        summarizer = NewsSummarizer(config)
+        summarizer._load_last_check()
+
+        assert summarizer._last_check is None
 
     def test_save_last_check(
-        self, news_summarizer: NewsSummarizer, tmp_path: Path
+        self, sample_config: Config, tmp_path: Path
     ) -> None:
         """Test saving last check timestamp to file."""
         check_file = tmp_path / ".last_check"
-        news_summarizer._last_check = datetime(2024, 1, 15, 11, 0)
 
-        with patch("src.main.LAST_CHECK_FILE", check_file):
-            news_summarizer._save_last_check()
+        config = Config(
+            telegram_api_id=sample_config.telegram_api_id,
+            telegram_api_hash=sample_config.telegram_api_hash,
+            telegram_session_string=sample_config.telegram_session_string,
+            telegram_bot_token=sample_config.telegram_bot_token,
+            output_channel_id=sample_config.output_channel_id,
+            openrouter_api_key=sample_config.openrouter_api_key,
+            test_mode=True,
+            test_state_file=check_file,
+        )
+
+        summarizer = NewsSummarizer(config)
+        summarizer._last_check = datetime(2024, 1, 15, 11, 0)
+        summarizer._save_last_check()
 
         # Verify file was written
         assert check_file.exists()
         data = json.loads(check_file.read_text())
         assert "last_check" in data
 
-    def test_save_last_check_none(self, news_summarizer: NewsSummarizer, tmp_path: Path) -> None:
+    def test_save_last_check_none(self, sample_config: Config, tmp_path: Path) -> None:
         """Test saving last check when timestamp is None."""
         check_file = tmp_path / ".last_check"
-        news_summarizer._last_check = None
 
-        with patch("src.main.LAST_CHECK_FILE", check_file):
-            news_summarizer._save_last_check()
+        config = Config(
+            telegram_api_id=sample_config.telegram_api_id,
+            telegram_api_hash=sample_config.telegram_api_hash,
+            telegram_session_string=sample_config.telegram_session_string,
+            telegram_bot_token=sample_config.telegram_bot_token,
+            output_channel_id=sample_config.output_channel_id,
+            openrouter_api_key=sample_config.openrouter_api_key,
+            test_mode=True,
+            test_state_file=check_file,
+        )
+
+        summarizer = NewsSummarizer(config)
+        summarizer._last_check = None
+        summarizer._save_last_check()
 
         # File should not be created
         assert not check_file.exists()
@@ -305,7 +390,7 @@ class TestSeenUrls:
                 return_value=sample_summary,
             ),
             patch.object(
-                news_summarizer.bot, "post_summary", new_callable=AsyncMock, return_value=True
+                news_summarizer.output_writer, "post_summary", new_callable=AsyncMock, return_value=True
             ),
         ):
             await news_summarizer._summarize_job()
@@ -341,7 +426,7 @@ class TestSeenUrls:
                 return_value=sample_summary,
             ),
             patch.object(
-                news_summarizer.bot, "post_summary", new_callable=AsyncMock, return_value=True
+                news_summarizer.output_writer, "post_summary", new_callable=AsyncMock, return_value=True
             ),
         ):
             await news_summarizer._summarize_job()
@@ -349,14 +434,6 @@ class TestSeenUrls:
             # Only Iran-related messages are filtered and added
             # Based on sample_rss_messages fixture, only the Iran message passes
             assert len(news_summarizer._seen_urls) >= 1
-
-
-class TestLastCheckFile:
-    """Tests for last check file path."""
-
-    def test_last_check_file_path(self) -> None:
-        """Test that LAST_CHECK_FILE is defined correctly."""
-        assert LAST_CHECK_FILE == Path(".last_check")
 
 
 class TestSeenUrlsFile:
@@ -369,3 +446,31 @@ class TestSeenUrlsFile:
     def test_max_seen_urls_constant(self) -> None:
         """Test that MAX_SEEN_URLS is defined."""
         assert MAX_SEEN_URLS == 1000
+
+
+class TestTestMode:
+    """Tests for test mode functionality."""
+
+    def test_uses_file_writer_in_test_mode(self, test_mode_summarizer: NewsSummarizer) -> None:
+        """Test that FileWriter is used in test mode."""
+        assert isinstance(test_mode_summarizer.output_writer, FileWriter)
+
+    def test_uses_telegram_bot_in_production(self, news_summarizer: NewsSummarizer) -> None:
+        """Test that TelegramBot is used in production mode."""
+        assert isinstance(news_summarizer.output_writer, TelegramBot)
+
+    def test_uses_test_state_file(self, test_mode_summarizer: NewsSummarizer, tmp_path: Path) -> None:
+        """Test that test mode uses separate state file."""
+        assert test_mode_summarizer._state_file == tmp_path / ".last_check.test"
+
+    def test_uses_production_state_file(self, news_summarizer: NewsSummarizer) -> None:
+        """Test that production mode uses default state file."""
+        assert news_summarizer._state_file == Path(".last_check")
+
+    def test_effective_interval_in_test_mode(self, test_mode_summarizer: NewsSummarizer) -> None:
+        """Test that test mode uses test interval."""
+        assert test_mode_summarizer.config.effective_summary_interval_minutes == 5
+
+    def test_effective_interval_in_production(self, news_summarizer: NewsSummarizer) -> None:
+        """Test that production mode uses production interval."""
+        assert news_summarizer.config.effective_summary_interval_minutes == 30

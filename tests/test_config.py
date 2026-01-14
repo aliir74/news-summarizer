@@ -273,3 +273,178 @@ class TestLoadSourcesYaml:
         assert len(rss_feeds) == 1
         assert iran_filter.enabled is True
         assert iran_filter.keywords == ["iran"]
+
+
+class TestTestModeConfig:
+    """Tests for test mode configuration."""
+
+    def test_test_mode_disabled_by_default(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test that test mode is disabled by default."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.delenv("TEST_MODE", raising=False)
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.test_mode is False
+
+    def test_test_mode_enabled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test enabling test mode via env var."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("TEST_MODE", "true")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.test_mode is True
+
+    def test_test_mode_case_insensitive(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test that test mode env var is case insensitive."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("TEST_MODE", "TRUE")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.test_mode is True
+
+    def test_test_mode_interval(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test custom test mode interval."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("TEST_MODE", "true")
+        monkeypatch.setenv("TEST_SUMMARY_INTERVAL_MINUTES", "2")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.test_summary_interval_minutes == 2
+
+    def test_effective_interval_production(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test effective interval in production mode."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("SUMMARY_INTERVAL_MINUTES", "60")
+        monkeypatch.delenv("TEST_MODE", raising=False)
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.effective_summary_interval_minutes == 60
+
+    def test_effective_interval_test_mode(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test effective interval in test mode."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("SUMMARY_INTERVAL_MINUTES", "60")
+        monkeypatch.setenv("TEST_MODE", "true")
+        monkeypatch.setenv("TEST_SUMMARY_INTERVAL_MINUTES", "3")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.effective_summary_interval_minutes == 3
+
+    def test_effective_state_file_production(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test effective state file in production mode."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.delenv("TEST_MODE", raising=False)
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.effective_state_file == Path(".last_check")
+
+    def test_effective_state_file_test_mode(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test effective state file in test mode."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("TEST_MODE", "true")
+        monkeypatch.setenv("TEST_STATE_FILE", ".custom_test_state")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.effective_state_file == Path(".custom_test_state")
+
+    def test_test_output_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test custom test output directory."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("TEST_MODE", "true")
+        monkeypatch.setenv("TEST_OUTPUT_DIR", "custom_output")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.test_output_dir == Path("custom_output")
+
+    def test_default_test_mode_values(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test default values for test mode settings."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("TEST_MODE", "true")
+        monkeypatch.delenv("TEST_SUMMARY_INTERVAL_MINUTES", raising=False)
+        monkeypatch.delenv("TEST_OUTPUT_DIR", raising=False)
+        monkeypatch.delenv("TEST_STATE_FILE", raising=False)
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.test_summary_interval_minutes == 5
+        assert config.test_output_dir == Path("output")
+        assert config.test_state_file == Path(".last_check.test")

@@ -56,6 +56,10 @@ htmlcov/
 
 # Last check timestamp
 .last_check
+.last_check.test
+
+# Test mode output
+output/
 
 # OS
 .DS_Store
