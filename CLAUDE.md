@@ -34,7 +34,7 @@ uv run pyright src
 
 - **NewsSummarizer (main.py)** - Orchestrator that manages lifecycle, scheduling (APScheduler), and graceful shutdown via signal handlers
 - **TelegramReader (telegram_reader.py)** - Pyrogram client with session string auth for reading channel messages
-- **RSSReader (rss_reader.py)** - Async HTTP client (httpx) with feedparser for fetching and parsing RSS/Atom feeds
+- **RSSReader (rss_reader.py)** - Async HTTP client (httpx) with feedparser for fetching and parsing RSS/Atom feeds. Includes URL-based deduplication to prevent duplicate articles across runs.
 - **IranRelevanceFilter (iran_filter.py)** - Keyword-based filtering for Iran-related content with configurable keywords
 - **TelegramBot (telegram_bot.py)** - Pyrogram bot for posting summaries with smart message splitting (4096 char limit)
 - **Summarizer (summarizer.py)** - OpenRouter API integration via OpenAI SDK for Persian summarization
@@ -43,12 +43,12 @@ uv run pyright src
 **Data Flow:**
 1. Scheduler triggers at configured interval (default: 30 min)
 2. TelegramReader fetches messages from monitored Telegram channels since last check
-3. RSSReader fetches articles from configured RSS feeds since last check
+3. RSSReader fetches articles from configured RSS feeds since last check (skips already-seen URLs)
 4. IranRelevanceFilter filters RSS articles for Iran-related content using keyword matching
 5. Messages from both sources are merged and sorted by timestamp
 6. Summarizer sends messages to LLM for Persian summary generation
 7. TelegramBot posts formatted summary to output channel
-8. Last-check timestamp persisted to .last_check file
+8. State persisted: last-check timestamp to .last_check file, seen RSS URLs to .seen_urls file (max 1000 URLs)
 
 ## Code Style
 

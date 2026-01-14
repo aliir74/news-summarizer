@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 # File for persisting last check timestamp
 LAST_CHECK_FILE = Path(".last_check")
 
+# File for persisting seen RSS article URLs (prevents duplicates)
+SEEN_URLS_FILE = Path(".seen_urls")
+
+# Maximum number of seen URLs to keep (prevents unbounded growth)
+MAX_SEEN_URLS = 1000
+
 
 class NewsSummarizer:
     """Main application class that coordinates all components."""
@@ -42,14 +48,16 @@ class NewsSummarizer:
         self.summarizer = Summarizer(config)
         self.scheduler = AsyncIOScheduler()
         self._last_check: datetime | None = None
+        self._seen_urls: set[str] = set()
         self._running = False
 
     async def start(self) -> None:
         """Start the news summarizer."""
         logger.info("Starting news summarizer...")
 
-        # Load last check timestamp
+        # Load last check timestamp and seen URLs
         self._load_last_check()
+        self._load_seen_urls()
 
         # Start clients
         await self.telegram_reader.start()
@@ -80,8 +88,9 @@ class NewsSummarizer:
         self._running = False
         self.scheduler.shutdown(wait=False)
 
-        # Save last check timestamp
+        # Save last check timestamp and seen URLs
         self._save_last_check()
+        self._save_seen_urls()
 
         # Stop clients
         await self.telegram_reader.stop()
@@ -104,8 +113,10 @@ class NewsSummarizer:
             telegram_messages = await self.telegram_reader.get_all_channel_updates(since)
             logger.info(f"Found {len(telegram_messages)} Telegram messages")
 
-            # Fetch and filter messages from RSS feeds
-            rss_messages = await self.rss_reader.get_all_feed_updates(since)
+            # Fetch and filter messages from RSS feeds (pass seen_urls for deduplication)
+            rss_messages = await self.rss_reader.get_all_feed_updates(
+                since, seen_urls=self._seen_urls
+            )
             logger.info(f"Found {len(rss_messages)} RSS articles")
 
             filtered_rss = self.iran_filter.filter_messages(rss_messages)
@@ -132,9 +143,15 @@ class NewsSummarizer:
             else:
                 logger.info("No new messages to summarize")
 
-            # Update last check timestamp
+            # Add new RSS article URLs to seen set (for deduplication)
+            for msg in filtered_rss:
+                if msg.url:
+                    self._seen_urls.add(msg.url)
+
+            # Update last check timestamp and save state
             self._last_check = datetime.now()
             self._save_last_check()
+            self._save_seen_urls()
 
         except Exception as e:
             logger.error(f"Error in summarization job: {e}", exc_info=True)
@@ -159,6 +176,26 @@ class NewsSummarizer:
                 )
             except OSError as e:
                 logger.warning(f"Could not save last check timestamp: {e}")
+
+    def _load_seen_urls(self) -> None:
+        """Load seen RSS article URLs from file."""
+        if SEEN_URLS_FILE.exists():
+            try:
+                data = json.loads(SEEN_URLS_FILE.read_text())
+                self._seen_urls = set(data.get("urls", []))
+                logger.info(f"Loaded {len(self._seen_urls)} seen URLs")
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.warning(f"Could not load seen URLs: {e}")
+                self._seen_urls = set()
+
+    def _save_seen_urls(self) -> None:
+        """Save seen RSS article URLs to file."""
+        try:
+            # Keep only the most recent URLs to prevent unbounded growth
+            urls_to_save = list(self._seen_urls)[-MAX_SEEN_URLS:]
+            SEEN_URLS_FILE.write_text(json.dumps({"urls": urls_to_save}))
+        except OSError as e:
+            logger.warning(f"Could not save seen URLs: {e}")
 
 
 async def main() -> None:

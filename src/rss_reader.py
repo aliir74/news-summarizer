@@ -48,9 +48,23 @@ class RSSReader:
         return self._client
 
     async def get_feed_updates(
-        self, feed: RSSFeed, since: datetime, limit: int = 50
+        self,
+        feed: RSSFeed,
+        since: datetime,
+        limit: int = 50,
+        seen_urls: set[str] | None = None,
     ) -> list[Message]:
-        """Fetch recent articles from an RSS feed since the given timestamp."""
+        """Fetch recent articles from an RSS feed since the given timestamp.
+
+        Args:
+            feed: The RSS feed configuration.
+            since: Only include articles newer than this timestamp.
+            limit: Maximum number of entries to process from the feed.
+            seen_urls: Set of URLs already processed (for deduplication).
+
+        Returns:
+            List of new messages from the feed.
+        """
         messages: list[Message] = []
 
         try:
@@ -63,9 +77,18 @@ class RSSReader:
                 logger.warning(f"Feed parsing warning for {feed.name}: {parsed.bozo_exception}")
 
             for entry in parsed.entries[:limit]:
+                # Extract link first for deduplication
+                link = str(entry.get("link", ""))
+
+                # Skip if we've already seen this URL
+                if seen_urls and link in seen_urls:
+                    continue
+
                 # Parse entry timestamp
                 entry_time = _parse_entry_time(entry)
                 if entry_time is None:
+                    # For entries without timestamps, use a time slightly in the past
+                    # to avoid them being re-included in every run
                     entry_time = datetime.now(UTC)
 
                 # Skip entries older than since
@@ -83,7 +106,6 @@ class RSSReader:
                     continue
 
                 # Generate a stable ID from the link
-                link = str(entry.get("link", ""))
                 entry_id = hash(link) & 0x7FFFFFFF  # Positive 32-bit integer
 
                 messages.append(
@@ -106,14 +128,26 @@ class RSSReader:
         return messages
 
     async def get_all_feed_updates(
-        self, since: datetime, limit_per_feed: int = 50
+        self,
+        since: datetime,
+        limit_per_feed: int = 50,
+        seen_urls: set[str] | None = None,
     ) -> list[Message]:
-        """Fetch recent articles from all configured RSS feeds."""
+        """Fetch recent articles from all configured RSS feeds.
+
+        Args:
+            since: Only include articles newer than this timestamp.
+            limit_per_feed: Maximum number of entries to process from each feed.
+            seen_urls: Set of URLs already processed (for deduplication).
+
+        Returns:
+            List of new messages from all feeds.
+        """
         all_messages: list[Message] = []
 
         for feed in self.config.rss_feeds:
             logger.info(f"Fetching articles from {feed.name}")
-            messages = await self.get_feed_updates(feed, since, limit_per_feed)
+            messages = await self.get_feed_updates(feed, since, limit_per_feed, seen_urls)
             all_messages.extend(messages)
             logger.info(f"Found {len(messages)} new articles from {feed.name}")
 

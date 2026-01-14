@@ -140,6 +140,54 @@ class TestRSSReader:
             # Should have messages from the one configured feed
             assert len(messages) >= 0  # Depends on config
 
+    async def test_get_feed_updates_skips_seen_urls(
+        self, sample_config: Config, sample_rss_feed: RSSFeed, sample_rss_xml: str
+    ) -> None:
+        """Test that articles with seen URLs are filtered out."""
+        reader = RSSReader(sample_config)
+
+        mock_response = MagicMock()
+        mock_response.text = sample_rss_xml
+        mock_response.raise_for_status = MagicMock()
+
+        # Mark the first article as seen
+        seen_urls = {"https://example.com/article1"}
+
+        with patch.object(reader, "_client") as mock_client:
+            mock_client.get = AsyncMock(return_value=mock_response)
+            reader._client = mock_client
+
+            since = datetime(2024, 1, 1)
+            messages = await reader.get_feed_updates(sample_rss_feed, since, seen_urls=seen_urls)
+
+            # Should have only one message (the one not in seen_urls)
+            assert len(messages) == 1
+            assert messages[0].url == "https://example.com/article2"
+
+    async def test_get_all_feed_updates_with_seen_urls(
+        self, sample_config: Config, sample_rss_xml: str
+    ) -> None:
+        """Test that seen_urls are passed through to get_feed_updates."""
+        reader = RSSReader(sample_config)
+
+        mock_response = MagicMock()
+        mock_response.text = sample_rss_xml
+        mock_response.raise_for_status = MagicMock()
+
+        # Mark first article as seen
+        seen_urls = {"https://example.com/article1"}
+
+        with patch.object(reader, "_client") as mock_client:
+            mock_client.get = AsyncMock(return_value=mock_response)
+            reader._client = mock_client
+
+            since = datetime(2024, 1, 1)
+            messages = await reader.get_all_feed_updates(since, seen_urls=seen_urls)
+
+            # All returned messages should have URLs not in seen_urls
+            for msg in messages:
+                assert msg.url not in seen_urls
+
 
 class TestParseEntryTime:
     """Tests for _parse_entry_time helper function."""
