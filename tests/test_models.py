@@ -2,7 +2,14 @@
 
 from datetime import datetime
 
-from src.models import TEHRAN_TZ, Message, Summary
+from src.models import (
+    TEHRAN_TZ,
+    Message,
+    SourceInfo,
+    SourceType,
+    Summary,
+    extract_domain,
+)
 
 
 class TestMessage:
@@ -137,3 +144,118 @@ class TestSummary:
 
         assert "1 خبر" in formatted
         assert "1 کانال" in formatted
+
+    def test_format_for_telegram_mixed_sources(self) -> None:
+        """Test formatting with both Telegram and RSS sources."""
+        tehran_time = datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ)
+        summary = Summary(
+            content="خلاصه اخبار تست",
+            source_count=4,
+            channels=["Channel A", "BBC Persian"],
+            sources=[
+                SourceInfo(name="channel_a", source_type=SourceType.TELEGRAM),
+                SourceInfo(
+                    name="BBC Persian", source_type=SourceType.RSS, domain="bbc.co.uk"
+                ),
+            ],
+            created_at=tehran_time,
+        )
+
+        formatted = summary.format_for_telegram()
+
+        assert "@channel_a" in formatted  # Telegram with @
+        assert "bbc.co.uk" in formatted  # RSS with domain
+        assert "@BBC Persian" not in formatted  # Should NOT have @ for RSS
+
+    def test_format_for_telegram_rss_without_domain(self) -> None:
+        """Test formatting RSS source without domain falls back to name."""
+        summary = Summary(
+            content="Content",
+            source_count=1,
+            channels=["Test Feed"],
+            sources=[
+                SourceInfo(name="Test Feed", source_type=SourceType.RSS, domain=""),
+            ],
+            created_at=datetime(2024, 1, 15, 12, 0),
+        )
+
+        formatted = summary.format_for_telegram()
+
+        assert "Test Feed" in formatted
+        assert "@Test Feed" not in formatted
+
+
+class TestSourceInfo:
+    """Tests for SourceInfo dataclass."""
+
+    def test_source_info_telegram(self) -> None:
+        """Test SourceInfo for Telegram sources."""
+        source = SourceInfo(name="channel1", source_type=SourceType.TELEGRAM)
+        assert source.name == "channel1"
+        assert source.source_type == SourceType.TELEGRAM
+        assert source.domain == ""
+
+    def test_source_info_rss(self) -> None:
+        """Test SourceInfo for RSS sources."""
+        source = SourceInfo(
+            name="BBC Persian", source_type=SourceType.RSS, domain="bbc.co.uk"
+        )
+        assert source.name == "BBC Persian"
+        assert source.source_type == SourceType.RSS
+        assert source.domain == "bbc.co.uk"
+
+
+class TestExtractDomain:
+    """Tests for extract_domain helper function."""
+
+    def test_extract_domain_simple(self) -> None:
+        """Test extracting domain from a simple URL."""
+        assert extract_domain("https://example.com/path") == "example.com"
+
+    def test_extract_domain_with_www(self) -> None:
+        """Test that www. prefix is removed."""
+        assert extract_domain("https://www.bbc.co.uk/news") == "bbc.co.uk"
+
+    def test_extract_domain_with_subdomain(self) -> None:
+        """Test that subdomains other than www are preserved."""
+        assert extract_domain("https://feeds.bbci.co.uk/news") == "feeds.bbci.co.uk"
+
+    def test_extract_domain_empty(self) -> None:
+        """Test empty string returns empty domain."""
+        assert extract_domain("") == ""
+
+    def test_extract_domain_invalid(self) -> None:
+        """Test invalid URL returns empty string."""
+        assert extract_domain("not-a-url") == ""
+
+    def test_extract_domain_http(self) -> None:
+        """Test HTTP URLs work correctly."""
+        assert extract_domain("http://example.org/feed") == "example.org"
+
+
+class TestMessageSourceType:
+    """Tests for Message source_type field."""
+
+    def test_message_default_source_type(self) -> None:
+        """Test that default source type is TELEGRAM."""
+        msg = Message(
+            id=1,
+            channel_username="channel",
+            channel_title="Channel",
+            text="Text",
+            timestamp=datetime.now(),
+        )
+        assert msg.source_type == SourceType.TELEGRAM
+
+    def test_message_rss_source_type(self) -> None:
+        """Test setting RSS source type."""
+        msg = Message(
+            id=1,
+            channel_username="Feed",
+            channel_title="Feed",
+            text="Text",
+            timestamp=datetime.now(),
+            url="https://example.com/article",
+            source_type=SourceType.RSS,
+        )
+        assert msg.source_type == SourceType.RSS

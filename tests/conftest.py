@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.config import Config, IranFilter, RSSFeed
-from src.models import Message, Summary
+from src.models import Message, SourceType, Summary
 
 
 @pytest.fixture
@@ -125,6 +125,7 @@ def sample_rss_messages() -> list[Message]:
             text="Iran announces new economic policy in Tehran",
             timestamp=datetime(2024, 1, 15, 10, 30),
             url="https://example.com/article1",
+            source_type=SourceType.RSS,
         ),
         Message(
             id=67890,
@@ -133,6 +134,7 @@ def sample_rss_messages() -> list[Message]:
             text="Weather update for Paris today",
             timestamp=datetime(2024, 1, 15, 10, 35),
             url="https://example.com/article2",
+            source_type=SourceType.RSS,
         ),
         Message(
             id=11111,
@@ -141,6 +143,7 @@ def sample_rss_messages() -> list[Message]:
             text="Iranian scientists make breakthrough",
             timestamp=datetime(2024, 1, 15, 10, 40),
             url="https://example.com/article3",
+            source_type=SourceType.RSS,
         ),
     ]
 

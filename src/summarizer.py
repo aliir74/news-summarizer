@@ -5,7 +5,7 @@ import logging
 from openai import OpenAI
 
 from src.config import Config
-from src.models import Message, Summary
+from src.models import Message, SourceInfo, SourceType, Summary, extract_domain
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +68,26 @@ class Summarizer:
             channels = list({msg.channel_title for msg in messages})
             channel_usernames = list({msg.channel_username for msg in messages})
 
+            # Build source info with proper types
+            seen_sources: dict[str, SourceInfo] = {}
+            for msg in messages:
+                if msg.channel_username not in seen_sources:
+                    domain = ""
+                    if msg.source_type == SourceType.RSS and msg.url:
+                        domain = extract_domain(msg.url)
+                    seen_sources[msg.channel_username] = SourceInfo(
+                        name=msg.channel_username,
+                        source_type=msg.source_type,
+                        domain=domain,
+                    )
+            sources = list(seen_sources.values())
+
             return Summary(
                 content=content,
                 source_count=len(messages),
                 channels=channels,
                 channel_usernames=channel_usernames,
+                sources=sources,
             )
 
         except Exception as e:
