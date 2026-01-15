@@ -8,7 +8,7 @@ import pytest
 
 from src.config import Config, RSSFeed
 from src.models import SourceType
-from src.rss_reader import RSSReader, _extract_entry_text, _parse_entry_time
+from src.rss_reader import RSSReader, _clean_text, _extract_entry_text, _parse_entry_time
 
 
 class TestRSSReader:
@@ -298,3 +298,148 @@ class TestExtractEntryText:
         result = _extract_entry_text(entry)
 
         assert result == ""
+
+    def test_extract_cleans_non_persian_english_chars(self) -> None:
+        """Test that extraction cleans non-Persian/English characters."""
+        entry = {
+            "title": "رویترز (Reuters)",
+            "summary": "رو이터 (از طریق گوگل نیوز) خبر جدید",
+        }
+        result = _extract_entry_text(entry)
+
+        # Korean characters should be removed
+        assert "이터" not in result
+        # Persian and English should be preserved
+        assert "رویترز" in result or "Reuters" in result
+        assert "خبر جدید" in result
+
+
+class TestCleanText:
+    """Tests for _clean_text helper function."""
+
+    def test_clean_text_removes_korean_characters(self) -> None:
+        """Test that Korean characters are removed."""
+        text = "رو이터 (از طریق گوگل نیوز)"
+        result = _clean_text(text)
+
+        assert "이터" not in result
+        assert "رو" in result
+        assert "از طریق گوگل نیوز" in result
+
+    def test_clean_text_removes_chinese_characters(self) -> None:
+        """Test that Chinese characters are removed."""
+        text = "新闻 News about Iran ایران"
+        result = _clean_text(text)
+
+        assert "新闻" not in result
+        assert "News about Iran" in result
+        assert "ایران" in result
+
+    def test_clean_text_removes_japanese_characters(self) -> None:
+        """Test that Japanese characters are removed."""
+        text = "ニュース Iran news ایران"
+        result = _clean_text(text)
+
+        assert "ニュース" not in result
+        assert "Iran news" in result
+        assert "ایران" in result
+
+    def test_clean_text_preserves_persian_text(self) -> None:
+        """Test that Persian text is preserved."""
+        text = "این یک متن فارسی است که باید حفظ شود."
+        result = _clean_text(text)
+
+        assert result == text
+
+    def test_clean_text_preserves_english_text(self) -> None:
+        """Test that English text is preserved."""
+        text = "This is English text that should be preserved."
+        result = _clean_text(text)
+
+        assert result == text
+
+    def test_clean_text_preserves_numbers(self) -> None:
+        """Test that numbers are preserved."""
+        text = "2024 سال ۱۴۰۳"
+        result = _clean_text(text)
+
+        assert "2024" in result
+        assert "سال" in result
+
+    def test_clean_text_preserves_common_punctuation(self) -> None:
+        """Test that common punctuation is preserved."""
+        text = "Hello, world! This is a test? Yes; it is: (test)"
+        result = _clean_text(text)
+
+        assert "," in result
+        assert "!" in result
+        assert "?" in result
+        assert ";" in result
+        assert ":" in result
+        assert "(" in result
+        assert ")" in result
+
+    def test_clean_text_preserves_persian_punctuation(self) -> None:
+        """Test that Persian punctuation is preserved."""
+        text = "سلام، این یک تست است؟ بله؛ هست."
+        result = _clean_text(text)
+
+        # Persian comma, question mark, semicolon
+        assert "،" in result
+        assert "؟" in result
+        assert "؛" in result
+
+    def test_clean_text_preserves_zwnj(self) -> None:
+        """Test that ZWNJ (zero-width non-joiner) is preserved."""
+        # ZWNJ is used in Persian to prevent letters from joining
+        text = "می‌باشد"  # Contains ZWNJ between می and باشد
+        result = _clean_text(text)
+
+        assert result == text
+        # Verify ZWNJ is present
+        assert "\u200c" in result
+
+    def test_clean_text_handles_mixed_scripts(self) -> None:
+        """Test cleaning text with multiple non-Latin scripts."""
+        text = "ایران Iran 中国 한국 日本 Deutschland"
+        result = _clean_text(text)
+
+        assert "ایران" in result
+        assert "Iran" in result
+        assert "Deutschland" in result
+        # Non-Latin non-Persian scripts should be removed
+        assert "中国" not in result
+        assert "한국" not in result
+        assert "日本" not in result
+
+    def test_clean_text_preserves_arabic_extended(self) -> None:
+        """Test that Arabic extended characters are preserved."""
+        # Some Arabic characters used in Persian
+        text = "کتاب گاه پژوهش"  # Uses Persian-specific Arabic letters
+        result = _clean_text(text)
+
+        assert result == text
+
+    def test_clean_text_handles_empty_string(self) -> None:
+        """Test that empty string returns empty string."""
+        assert _clean_text("") == ""
+
+    def test_clean_text_strips_whitespace(self) -> None:
+        """Test that result is stripped of leading/trailing whitespace."""
+        text = "  some text  "
+        result = _clean_text(text)
+
+        assert result == "some text"
+
+    def test_clean_text_real_world_example(self) -> None:
+        """Test with a real-world example containing Korean from Google News."""
+        text = "رویترز 로이터 (از طریق Google News) - اخبار مهم درباره ایران"
+        result = _clean_text(text)
+
+        # Korean should be removed
+        assert "로이터" not in result
+        # Persian and English should remain
+        assert "رویترز" in result
+        assert "Google News" in result
+        assert "اخبار مهم" in result
+        assert "ایران" in result

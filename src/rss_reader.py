@@ -180,6 +180,26 @@ def _parse_entry_time(entry: dict) -> datetime | None:
     return None
 
 
+def _clean_text(text: str) -> str:
+    """Remove non-Persian/English characters while preserving essential content.
+
+    Keeps:
+    - Persian/Arabic script (U+0600-U+06FF and extensions)
+    - Latin letters (a-zA-Z)
+    - Numbers (0-9)
+    - Common punctuation and whitespace
+    - Zero-width non-joiner (U+200C) - essential for Persian typography
+    """
+    # Keep: Persian/Arabic, Latin, digits, common punctuation, ZWNJ
+    cleaned = re.sub(
+        r"[^\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF"
+        r"a-zA-Z0-9\s.,!?;:\-()\"'@#$%&*/\n\u200C\u060C\u061B\u061F]",
+        "",
+        text,
+    )
+    return cleaned.strip()
+
+
 def _extract_entry_text(entry: dict) -> str:
     """Extract the text content from a feed entry."""
     # Build text from title and description/summary
@@ -207,4 +227,5 @@ def _extract_entry_text(entry: dict) -> str:
         if description:
             parts.append(description)
 
-    return "\n\n".join(parts)
+    # Clean non-Persian/English characters and return
+    return _clean_text("\n\n".join(parts))
