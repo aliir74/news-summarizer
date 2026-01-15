@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from src.config import Config, DeduplicationConfig
+from src.config import Config
 from src.database import ArticleFingerprint, FingerprintDatabase
 from src.models import Message
 
@@ -137,10 +137,10 @@ class Deduplicator:
         if not recent:
             return False
 
-        new_entities = set(e.lower() for e in fingerprint.entities)
+        new_entities = {e.lower() for e in fingerprint.entities}
 
         for stored in recent:
-            stored_entities = set(e.lower() for e in stored.entities)
+            stored_entities = {e.lower() for e in stored.entities}
 
             # Calculate entity overlap
             overlap = len(stored_entities & new_entities)
@@ -189,7 +189,7 @@ class Deduplicator:
 
             if fingerprint is None:
                 # If extraction fails, keep the message (fail open)
-                logger.warning(f"Feature extraction failed for message, keeping it")
+                logger.warning("Feature extraction failed for message, keeping it")
                 unique_messages.append(msg)
                 continue
 
