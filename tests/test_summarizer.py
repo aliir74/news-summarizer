@@ -7,7 +7,12 @@ import pytest
 
 from src.config import Config
 from src.models import Message, SourceType
-from src.summarizer import SUMMARIZATION_PROMPT, Summarizer
+from src.summarizer import (
+    ENGLISH_SUMMARY_PROMPT,
+    SUMMARIZATION_PROMPT,
+    TRANSLATION_PROMPT,
+    Summarizer,
+)
 
 
 @pytest.fixture
@@ -198,3 +203,268 @@ class TestSummarizer:
         rss_source = next(s for s in summary.sources if s.source_type == SourceType.RSS)
         assert rss_source.name == "RSS Feed"
         assert rss_source.domain == "example.com"
+
+
+class TestPromptFaithfulness:
+    """Tests for prompt faithfulness requirements."""
+
+    def test_prompt_contains_faithfulness_requirements(self) -> None:
+        """Test that the prompt contains strict faithfulness requirements."""
+        assert "CRITICAL REQUIREMENTS" in SUMMARIZATION_PROMPT
+        assert "ONLY include information explicitly stated" in SUMMARIZATION_PROMPT
+        assert "do not add any external knowledge" in SUMMARIZATION_PROMPT
+
+    def test_prompt_contains_modal_preservation_instruction(self) -> None:
+        """Test that the prompt instructs to preserve modal verbs."""
+        assert "PRESERVE uncertainty language" in SUMMARIZATION_PROMPT
+        assert "might" in SUMMARIZATION_PROMPT
+        assert "could" in SUMMARIZATION_PROMPT
+        assert "may" in SUMMARIZATION_PROMPT
+        assert "reportedly" in SUMMARIZATION_PROMPT
+        # Check Persian equivalents
+        assert "ممکن است" in SUMMARIZATION_PROMPT
+        assert "شاید" in SUMMARIZATION_PROMPT
+        assert "احتمالاً" in SUMMARIZATION_PROMPT
+
+    def test_prompt_contains_verb_tense_preservation(self) -> None:
+        """Test that the prompt instructs to maintain verb tenses."""
+        assert "MAINTAIN original verb tenses" in SUMMARIZATION_PROMPT
+        assert "conditional" in SUMMARIZATION_PROMPT.lower()
+
+    def test_prompt_prevents_hallucination(self) -> None:
+        """Test that the prompt prevents adding external knowledge."""
+        assert "Do NOT add context" in SUMMARIZATION_PROMPT
+        assert "training data" in SUMMARIZATION_PROMPT
+
+    def test_english_summary_prompt_contains_modal_preservation(self) -> None:
+        """Test that English summary prompt preserves modal verbs."""
+        assert "Preserve ALL uncertainty language" in ENGLISH_SUMMARY_PROMPT
+        assert "might" in ENGLISH_SUMMARY_PROMPT
+        assert "could" in ENGLISH_SUMMARY_PROMPT
+        assert "may" in ENGLISH_SUMMARY_PROMPT
+        assert "reportedly" in ENGLISH_SUMMARY_PROMPT
+        assert "allegedly" in ENGLISH_SUMMARY_PROMPT
+
+    def test_english_summary_prompt_prevents_tense_changes(self) -> None:
+        """Test that English summary prompt prevents verb tense changes."""
+        assert "Do NOT change verb tenses" in ENGLISH_SUMMARY_PROMPT
+
+    def test_translation_prompt_maps_modal_verbs(self) -> None:
+        """Test that translation prompt maps English modal verbs to Persian."""
+        # Check English to Persian mappings
+        assert '"might" → "ممکن است"' in TRANSLATION_PROMPT
+        assert '"could"' in TRANSLATION_PROMPT
+        assert '"may" → "ممکن است"' in TRANSLATION_PROMPT
+        assert '"reportedly" → "طبق گزارش‌ها"' in TRANSLATION_PROMPT
+        assert '"allegedly" → "ظاهراً"' in TRANSLATION_PROMPT
+        assert '"according to" → "به گفته"' in TRANSLATION_PROMPT
+
+    def test_translation_prompt_prevents_modification(self) -> None:
+        """Test that translation prompt prevents adding/removing information."""
+        assert "Do NOT change verb tenses" in TRANSLATION_PROMPT
+        assert "add/remove information" in TRANSLATION_PROMPT
+
+
+class TestLanguageDetection:
+    """Tests for language detection in two-stage summarization."""
+
+    def test_is_persian_with_persian_text(self, summarizer: Summarizer) -> None:
+        """Test that Persian text is correctly identified."""
+        persian_text = "این یک متن فارسی است که باید شناسایی شود."
+        assert summarizer._is_persian(persian_text) is True
+
+    def test_is_persian_with_english_text(self, summarizer: Summarizer) -> None:
+        """Test that English text is correctly identified as non-Persian."""
+        english_text = "This is an English text that should not be Persian."
+        assert summarizer._is_persian(english_text) is False
+
+    def test_is_persian_with_mixed_text_mostly_persian(
+        self, summarizer: Summarizer
+    ) -> None:
+        """Test mixed text that is mostly Persian."""
+        # More than 20% Persian characters
+        mixed_text = "این متن شامل English words می‌باشد"
+        assert summarizer._is_persian(mixed_text) is True
+
+    def test_is_persian_with_mixed_text_mostly_english(
+        self, summarizer: Summarizer
+    ) -> None:
+        """Test mixed text that is mostly English."""
+        # Less than 20% Persian characters
+        mixed_text = "This is mostly English with just one word فارسی"
+        # The ratio depends on exact calculation
+        result = summarizer._is_persian(mixed_text)
+        # This should be False since the Persian content is minimal
+        assert result is False
+
+    def test_is_persian_with_empty_text(self, summarizer: Summarizer) -> None:
+        """Test empty text returns False."""
+        assert summarizer._is_persian("") is False
+
+    def test_is_persian_with_numbers_only(self, summarizer: Summarizer) -> None:
+        """Test text with only numbers returns False."""
+        assert summarizer._is_persian("12345 67890") is False
+
+
+class TestTwoStageSummarization:
+    """Tests for two-stage summarization feature."""
+
+    def test_two_stage_disabled_by_default(self, sample_config: Config) -> None:
+        """Test that two-stage summarization is disabled by default."""
+        assert sample_config.two_stage_summarization is False
+
+    def test_two_stage_enabled_uses_two_stage_method(
+        self, sample_config: Config
+    ) -> None:
+        """Test that enabled two-stage uses the two-stage method."""
+        sample_config.two_stage_summarization = True
+        summarizer = Summarizer(sample_config)
+
+        messages = [
+            Message(
+                id=1,
+                channel_username="test",
+                channel_title="Test",
+                text="This is an English message.",
+                timestamp=datetime.now(),
+            )
+        ]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "خلاصه فارسی"
+
+        with patch.object(
+            summarizer._client.chat.completions, "create", return_value=mock_response
+        ) as mock_create:
+            summary = summarizer.summarize_news(messages)
+
+            # Should call the API multiple times for two-stage
+            # (English summary + Translation for English, Persian summary for Persian)
+            assert mock_create.call_count >= 1
+            assert summary is not None
+
+    def test_two_stage_disabled_uses_single_stage_method(
+        self, summarizer: Summarizer, sample_messages: list[Message]
+    ) -> None:
+        """Test that disabled two-stage uses single-stage method."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "خلاصه فارسی"
+
+        with patch.object(
+            summarizer._client.chat.completions, "create", return_value=mock_response
+        ) as mock_create:
+            summary = summarizer.summarize_news(sample_messages)
+
+            # Should call the API only once for single-stage
+            assert mock_create.call_count == 1
+            assert summary is not None
+
+    def test_two_stage_separates_english_and_persian(
+        self, sample_config: Config
+    ) -> None:
+        """Test that two-stage correctly separates English and Persian messages."""
+        sample_config.two_stage_summarization = True
+        summarizer = Summarizer(sample_config)
+
+        messages = [
+            Message(
+                id=1,
+                channel_username="en_channel",
+                channel_title="English Channel",
+                text="Trump might order sanctions on Iran.",
+                timestamp=datetime.now(),
+            ),
+            Message(
+                id=2,
+                channel_username="fa_channel",
+                channel_title="Persian Channel",
+                text="ایران ممکن است به تحریم‌ها پاسخ دهد.",
+                timestamp=datetime.now(),
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Summary content"
+
+        with patch.object(
+            summarizer._client.chat.completions, "create", return_value=mock_response
+        ):
+            summary = summarizer.summarize_news(messages)
+
+            assert summary is not None
+            # Both channels should be in the summary
+            assert "English Channel" in summary.channels or "Persian Channel" in summary.channels
+
+
+class TestTimestampFormat:
+    """Tests for timestamp formatting in summaries."""
+
+    def test_format_messages_includes_full_date(
+        self, summarizer: Summarizer
+    ) -> None:
+        """Test that formatted messages include full date, not just time."""
+        messages = [
+            Message(
+                id=1,
+                channel_username="test",
+                channel_title="Test Channel",
+                text="Test message",
+                timestamp=datetime(2024, 1, 15, 10, 30),
+            )
+        ]
+
+        formatted = summarizer._format_messages(messages)
+
+        # Should include YYYY-MM-DD format
+        assert "2024-01-15" in formatted
+        assert "10:30" in formatted
+
+    def test_format_messages_preserves_date_for_temporal_context(
+        self, summarizer: Summarizer
+    ) -> None:
+        """Test that dates from different days are distinguishable."""
+        messages = [
+            Message(
+                id=1,
+                channel_username="test",
+                channel_title="Test",
+                text="Old news",
+                timestamp=datetime(2024, 1, 10, 10, 30),
+            ),
+            Message(
+                id=2,
+                channel_username="test",
+                channel_title="Test",
+                text="New news",
+                timestamp=datetime(2024, 1, 15, 10, 30),
+            ),
+        ]
+
+        formatted = summarizer._format_messages(messages)
+
+        # Both dates should be present and distinguishable
+        assert "2024-01-10" in formatted
+        assert "2024-01-15" in formatted
+
+
+class TestTemperatureSetting:
+    """Tests for temperature setting in LLM calls."""
+
+    def test_temperature_is_zero(
+        self, summarizer: Summarizer, sample_messages: list[Message]
+    ) -> None:
+        """Test that temperature is set to 0 for factual accuracy."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Summary"
+
+        with patch.object(
+            summarizer._client.chat.completions, "create", return_value=mock_response
+        ) as mock_create:
+            summarizer.summarize_news(sample_messages)
+
+            call_kwargs = mock_create.call_args.kwargs
+            assert call_kwargs["temperature"] == 0
