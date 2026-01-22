@@ -34,3 +34,12 @@ iran_filter:
     - "تهران"
     - "ایرانی"
     - "جمهوری اسلامی"
+
+# Cloudflare Radar monitoring for internet traffic anomalies
+# Requires CLOUDFLARE_API_TOKEN environment variable
+radar_monitor:
+  enabled: true
+  location: "IR"  # ISO country code
+  interval_minutes: 60  # Check every hour (matches data granularity)
+  change_threshold_percent: 5.0  # Alert on >=5% change hour-over-hour
+  alert_cooldown_hours: 0  # 0 = alert every hour if threshold met

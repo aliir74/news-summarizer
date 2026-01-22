@@ -125,7 +125,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels:\n  - channel1\n  - channel2\n  - channel3\n")
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2", "channel3"]
         assert rss_feeds == []
@@ -138,7 +138,7 @@ class TestLoadSourcesYaml:
             "telegram_channels:\n  - channel1\n  - channel2\n"
         )
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2"]
 
@@ -147,7 +147,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("")
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert channels == []
         assert rss_feeds == []
@@ -158,7 +158,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("other_key: value\n")
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert channels == []
 
@@ -167,7 +167,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels:\n  - channel1\n  - \n  - channel2\n")
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2"]
 
@@ -186,7 +186,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels: not_a_list\n")
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert channels == []
 
@@ -201,7 +201,7 @@ class TestLoadSourcesYaml:
             "    url: https://example.com/feed2.xml\n"
         )
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert len(rss_feeds) == 2
         assert rss_feeds[0].name == "Feed One"
@@ -219,7 +219,7 @@ class TestLoadSourcesYaml:
             "  - url: https://example.com/no-name.xml\n"  # Missing name
         )
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert len(rss_feeds) == 1
         assert rss_feeds[0].name == "Valid Feed"
@@ -235,7 +235,7 @@ class TestLoadSourcesYaml:
             "    - tehran\n"
         )
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert iran_filter.enabled is True
         assert iran_filter.keywords == ["iran", "tehran"]
@@ -248,7 +248,7 @@ class TestLoadSourcesYaml:
             "  enabled: false\n"
         )
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert iran_filter.enabled is False
 
@@ -267,7 +267,7 @@ class TestLoadSourcesYaml:
             "    - iran\n"
         )
 
-        channels, rss_feeds, iran_filter = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1"]
         assert len(rss_feeds) == 1

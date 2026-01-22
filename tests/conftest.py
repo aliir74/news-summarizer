@@ -1,12 +1,12 @@
 """Shared test fixtures."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.config import Config, IranFilter, RSSFeed
-from src.models import Message, SourceType, Summary
+from src.config import Config, IranFilter, RadarMonitorConfig, RSSFeed
+from src.models import Anomaly, AnomalyStatus, Message, SourceType, Summary
 
 
 @pytest.fixture
@@ -178,3 +178,132 @@ def sample_rss_xml() -> str:
     </item>
   </channel>
 </rss>"""
+
+
+@pytest.fixture
+def radar_config() -> Config:
+    """Create a sample configuration with radar monitoring enabled."""
+    return Config(
+        telegram_api_id=12345,
+        telegram_api_hash="test_api_hash",
+        telegram_session_string="test_session_string",
+        telegram_bot_token="test_bot_token",
+        output_channel_id="@test_channel",
+        openrouter_api_key="test_openrouter_key",
+        cloudflare_api_token="test_cloudflare_token",
+        radar_monitor=RadarMonitorConfig(
+            enabled=True,
+            location="IR",
+            interval_minutes=60,
+            change_threshold_percent=5.0,
+            alert_cooldown_hours=0,
+        ),
+    )
+
+
+@pytest.fixture
+def sample_anomaly() -> Anomaly:
+    """Create a sample Cloudflare anomaly for testing."""
+    return Anomaly(
+        id="anomaly-123",
+        location="IR",
+        start_date=datetime(2024, 1, 15, 10, 0, tzinfo=UTC),
+        end_date=None,
+        status=AnomalyStatus.UNVERIFIED,
+        asn=None,
+    )
+
+
+@pytest.fixture
+def sample_anomalies_api_response() -> dict:
+    """Sample Cloudflare Radar anomalies API response."""
+    return {
+        "result": {
+            "trafficAnomalies": [
+                {
+                    "uuid": "anomaly-123",
+                    "locationCode": "IR",
+                    "startDate": "2024-01-15T10:00:00Z",
+                    "endDate": None,
+                    "status": "UNVERIFIED",
+                    "asnNumber": None,
+                },
+                {
+                    "uuid": "anomaly-456",
+                    "locationCode": "IR",
+                    "startDate": "2024-01-14T08:00:00Z",
+                    "endDate": "2024-01-14T12:00:00Z",
+                    "status": "VERIFIED",
+                    "asnNumber": 12345,
+                },
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def sample_timeseries_api_response() -> dict:
+    """Sample Cloudflare Radar timeseries API response."""
+    return {
+        "result": {
+            "serie_0": {
+                "timestamps": [
+                    "2024-01-15T08:00:00Z",
+                    "2024-01-15T09:00:00Z",
+                    "2024-01-15T10:00:00Z",
+                ],
+                "values": [0.85, 0.90, 0.80],
+            }
+        }
+    }
+
+
+@pytest.fixture
+def sample_timeseries_drop_response() -> dict:
+    """Sample timeseries showing a significant traffic drop (>5%)."""
+    return {
+        "result": {
+            "serie_0": {
+                "timestamps": [
+                    "2024-01-15T08:00:00Z",
+                    "2024-01-15T09:00:00Z",
+                    "2024-01-15T10:00:00Z",
+                ],
+                "values": [0.90, 0.90, 0.80],  # 11.1% drop
+            }
+        }
+    }
+
+
+@pytest.fixture
+def sample_timeseries_spike_response() -> dict:
+    """Sample timeseries showing a significant traffic increase (>5%)."""
+    return {
+        "result": {
+            "serie_0": {
+                "timestamps": [
+                    "2024-01-15T08:00:00Z",
+                    "2024-01-15T09:00:00Z",
+                    "2024-01-15T10:00:00Z",
+                ],
+                "values": [0.80, 0.80, 0.90],  # 12.5% increase
+            }
+        }
+    }
+
+
+@pytest.fixture
+def sample_timeseries_stable_response() -> dict:
+    """Sample timeseries with stable traffic (no significant change)."""
+    return {
+        "result": {
+            "serie_0": {
+                "timestamps": [
+                    "2024-01-15T08:00:00Z",
+                    "2024-01-15T09:00:00Z",
+                    "2024-01-15T10:00:00Z",
+                ],
+                "values": [0.85, 0.85, 0.86],  # ~1.2% change, below threshold
+            }
+        }
+    }

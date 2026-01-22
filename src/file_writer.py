@@ -49,3 +49,22 @@ class FileWriter:
         except OSError as e:
             logger.error(f"Error writing summary to file: {e}")
             return False
+
+    async def post_alert(self, alert_text: str) -> bool:
+        """Write an alert message to the alerts file."""
+        alerts_file = self._output_dir / "alerts.txt"
+
+        try:
+            with open(alerts_file, "a", encoding="utf-8") as f:
+                f.write("=" * 60 + "\n")
+                f.write(f"Alert at: {datetime.now().isoformat()}\n")
+                f.write("=" * 60 + "\n")
+                f.write(alert_text)
+                f.write("\n\n")
+
+            logger.info(f"Wrote alert to {alerts_file}")
+            return True
+
+        except OSError as e:
+            logger.error(f"Error writing alert to file: {e}")
+            return False

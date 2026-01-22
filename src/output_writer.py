@@ -23,3 +23,7 @@ class OutputWriter(Protocol):
     async def post_summary(self, summary: Summary) -> bool:
         """Post a summary and return success status."""
         ...
+
+    async def post_alert(self, alert_text: str) -> bool:
+        """Post an alert message and return success status."""
+        ...
