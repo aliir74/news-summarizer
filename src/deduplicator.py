@@ -81,6 +81,14 @@ class Deduplicator:
             if not data:
                 return None
 
+            logger.debug(
+                f"Extracted features for '{message.text[:50]}...':\n"
+                f"  Topic: {data.get('topic', 'unknown')}\n"
+                f"  Entities: {data.get('entities', [])}\n"
+                f"  Event type: {data.get('event_type', 'other')}\n"
+                f"  Keywords: {data.get('keywords', [])}"
+            )
+
             return ArticleFingerprint(
                 url=message.url,
                 title=message.text[:200],  # Use first 200 chars as title
@@ -135,7 +143,14 @@ class Deduplicator:
         )
 
         if not recent:
+            logger.debug(
+                f"No recent articles with topic '{fingerprint.topic}' found - article is unique"
+            )
             return False
+
+        logger.debug(
+            f"Comparing against {len(recent)} recent articles with topic '{fingerprint.topic}'"
+        )
 
         new_entities = {e.lower() for e in fingerprint.entities}
 
@@ -148,14 +163,28 @@ class Deduplicator:
 
             if total > 0:
                 similarity = overlap / total
+
+                # Log comparison details at DEBUG level
+                logger.debug(
+                    f"Comparing with stored article:\n"
+                    f"  Stored: '{stored.title[:50]}...'\n"
+                    f"  Stored entities: {stored.entities}\n"
+                    f"  New entities: {list(new_entities)}\n"
+                    f"  Overlap: {overlap}/{total} = {similarity:.2%}\n"
+                    f"  Threshold: {self._dedup_config.similarity_threshold:.2%}"
+                )
+
                 if similarity >= self._dedup_config.similarity_threshold:
                     logger.info(
-                        f"Duplicate found: '{fingerprint.title[:50]}...' "
+                        f"DUPLICATE: '{fingerprint.title[:50]}...' "
                         f"matches '{stored.title[:50]}...' "
-                        f"(similarity: {similarity:.2f})"
+                        f"(similarity: {similarity:.2%} >= threshold {self._dedup_config.similarity_threshold:.2%})"
                     )
                     return True
 
+        logger.debug(
+            f"UNIQUE: '{fingerprint.title[:50]}...' has no duplicates above threshold"
+        )
         return False
 
     def store(self, fingerprint: ArticleFingerprint) -> bool:
@@ -180,29 +209,40 @@ class Deduplicator:
             logger.debug("Deduplication disabled, returning all messages")
             return messages
 
+        logger.info(f"Processing {len(messages)} messages for deduplication")
         unique_messages = []
         duplicates_found = 0
+        extraction_failures = 0
 
-        for msg in messages:
+        for i, msg in enumerate(messages, 1):
+            logger.debug(f"Processing message {i}/{len(messages)}: {msg.text[:50]}...")
+
             # Extract features
             fingerprint = self.extract_features(msg)
 
             if fingerprint is None:
                 # If extraction fails, keep the message (fail open)
-                logger.warning("Feature extraction failed for message, keeping it")
+                extraction_failures += 1
+                logger.warning(
+                    f"Feature extraction failed for message {i}, keeping it (fail open)"
+                )
                 unique_messages.append(msg)
                 continue
 
             # Check for duplicates
             if self.is_duplicate(fingerprint):
                 duplicates_found += 1
+                logger.debug(f"Message {i} marked as duplicate, skipping")
                 continue
 
             # Store fingerprint and keep message
             self.store(fingerprint)
             unique_messages.append(msg)
+            logger.debug(f"Message {i} is unique, stored fingerprint")
 
-        if duplicates_found > 0:
-            logger.info(f"Filtered out {duplicates_found} duplicate messages")
+        logger.info(
+            f"Deduplication complete: {len(unique_messages)} unique, "
+            f"{duplicates_found} duplicates, {extraction_failures} extraction failures"
+        )
 
         return unique_messages
