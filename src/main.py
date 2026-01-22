@@ -10,6 +10,7 @@ from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from src.cloudflare_radar import CloudflareRadarMonitor
 from src.config import Config, ConfigError
 from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
@@ -58,6 +59,16 @@ class NewsSummarizer:
         self._seen_urls: set[str] = set()
         self._running = False
 
+        # Cloudflare Radar monitor (optional)
+        self.radar_monitor: CloudflareRadarMonitor | None = None
+        if config.radar_monitor.enabled and config.cloudflare_api_token:
+            self.radar_monitor = CloudflareRadarMonitor(config)
+            logger.info("Cloudflare Radar monitoring enabled")
+        elif config.radar_monitor.enabled and not config.cloudflare_api_token:
+            logger.warning(
+                "Radar monitor enabled but CLOUDFLARE_API_TOKEN not set - skipping"
+            )
+
         # State file path based on test mode
         self._state_file = config.effective_state_file
 
@@ -74,6 +85,10 @@ class NewsSummarizer:
         await self.rss_reader.start()
         await self.output_writer.start()
 
+        # Start radar monitor if enabled
+        if self.radar_monitor:
+            await self.radar_monitor.start()
+
         # Schedule the summarization job
         self.scheduler.add_job(
             self._summarize_job,
@@ -82,6 +97,17 @@ class NewsSummarizer:
             id="summarize_news",
             next_run_time=datetime.now(),  # Run immediately on start
         )
+
+        # Schedule the radar monitoring job if enabled
+        if self.radar_monitor:
+            self.scheduler.add_job(
+                self._check_radar_job,
+                "interval",
+                minutes=self.config.radar_monitor.interval_minutes,
+                id="check_radar",
+                next_run_time=datetime.now(),  # Run immediately on start
+            )
+
         self.scheduler.start()
 
         self._running = True
@@ -92,6 +118,11 @@ class NewsSummarizer:
         )
         logger.info(f"Monitoring {len(self.config.channels)} Telegram channels.")
         logger.info(f"Monitoring {len(self.config.rss_feeds)} RSS feeds.")
+        if self.radar_monitor:
+            logger.info(
+                f"Cloudflare Radar monitoring every "
+                f"{self.config.radar_monitor.interval_minutes} minutes."
+            )
 
     async def stop(self) -> None:
         """Stop the news summarizer."""
@@ -108,6 +139,10 @@ class NewsSummarizer:
         await self.telegram_reader.stop()
         await self.rss_reader.stop()
         await self.output_writer.stop()
+
+        # Stop radar monitor if enabled
+        if self.radar_monitor:
+            await self.radar_monitor.stop()
 
         logger.info("News summarizer stopped.")
 
@@ -167,6 +202,28 @@ class NewsSummarizer:
 
         except Exception as e:
             logger.error(f"Error in summarization job: {e}", exc_info=True)
+
+    async def _check_radar_job(self) -> None:
+        """Job that checks Cloudflare Radar for alerts."""
+        if not self.radar_monitor:
+            return
+
+        try:
+            logger.info("Checking Cloudflare Radar for alerts...")
+            alerts = await self.radar_monitor.check_all()
+
+            for alert in alerts:
+                success = await self.output_writer.post_alert(alert.message)
+                if success:
+                    logger.info(f"Posted radar alert: {alert.alert_type.value}")
+                else:
+                    logger.error(f"Failed to post radar alert: {alert.alert_type.value}")
+
+            if not alerts:
+                logger.info("No radar alerts to send")
+
+        except Exception as e:
+            logger.error(f"Error in radar check job: {e}", exc_info=True)
 
     def _load_last_check(self) -> None:
         """Load the last check timestamp from file."""

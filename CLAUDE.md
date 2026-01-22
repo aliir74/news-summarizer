@@ -63,6 +63,7 @@ uv run pyright src
 - **Type checker:** Pyright in basic mode (Pyrogram lacks complete type stubs)
 - **Import sorting:** isort via Ruff with "src" as first-party
 - **Imports:** All imports must be at the top of the file (no inline/function-level imports). Enforced by PLC0415 rule.
+- **Fixed string values:** Always create Enum types for fields with fixed string values instead of using raw strings with comments. Example: use `AnomalyStatus` enum instead of `status: str  # "UNVERIFIED", "VERIFIED"`.
 
 ## Testing
 

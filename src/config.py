@@ -37,6 +37,17 @@ class IranFilter:
 
 
 @dataclass
+class RadarMonitorConfig:
+    """Configuration for Cloudflare Radar monitoring."""
+
+    enabled: bool = False
+    location: str = "IR"
+    interval_minutes: int = 60
+    change_threshold_percent: float = 5.0
+    alert_cooldown_hours: int = 0  # 0 = alert every hour if threshold met
+
+
+@dataclass
 class Config:
     """Application configuration."""
 
@@ -66,6 +77,10 @@ class Config:
 
     # Iran filter configuration
     iran_filter: IranFilter = field(default_factory=IranFilter)
+
+    # Cloudflare Radar monitoring
+    cloudflare_api_token: str = ""
+    radar_monitor: RadarMonitorConfig = field(default_factory=RadarMonitorConfig)
 
     # Test mode settings
     test_mode: bool = False
@@ -109,6 +124,7 @@ class Config:
         channels: list[str] = []
         rss_feeds: list[RSSFeed] = []
         iran_filter = IranFilter()
+        radar_monitor = RadarMonitorConfig()
 
         # Determine channels file based on test mode
         if channels_file is None:
@@ -123,7 +139,7 @@ class Config:
 
         channels_path = Path(channels_file)
         if channels_path.exists():
-            channels, rss_feeds, iran_filter = _load_sources_yaml(channels_path)
+            channels, rss_feeds, iran_filter, radar_monitor = _load_sources_yaml(channels_path)
 
         # Parse API ID as integer
         try:
@@ -145,6 +161,8 @@ class Config:
             channels=channels,
             rss_feeds=rss_feeds,
             iran_filter=iran_filter,
+            cloudflare_api_token=os.getenv("CLOUDFLARE_API_TOKEN", ""),
+            radar_monitor=radar_monitor,
             test_mode=test_mode,
             test_summary_interval_minutes=int(os.getenv("TEST_SUMMARY_INTERVAL_MINUTES", "5")),
             test_output_dir=Path(os.getenv("TEST_OUTPUT_DIR", "output")),
@@ -152,14 +170,16 @@ class Config:
         )
 
 
-def _load_sources_yaml(path: Path) -> tuple[list[str], list[RSSFeed], IranFilter]:
+def _load_sources_yaml(
+    path: Path,
+) -> tuple[list[str], list[RSSFeed], IranFilter, RadarMonitorConfig]:
     """Load sources configuration from YAML file."""
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
 
         if not data:
-            return [], [], IranFilter()
+            return [], [], IranFilter(), RadarMonitorConfig()
 
         # Load Telegram channels (support both old 'channels' and new 'telegram_channels' keys)
         channels: list[str] = []
@@ -189,7 +209,19 @@ def _load_sources_yaml(path: Path) -> tuple[list[str], list[RSSFeed], IranFilter
             else:
                 iran_filter = IranFilter(enabled=bool(enabled))
 
-        return channels, rss_feeds, iran_filter
+        # Load Cloudflare Radar monitor configuration
+        radar_monitor = RadarMonitorConfig()
+        raw_radar = data.get("radar_monitor")
+        if isinstance(raw_radar, dict):
+            radar_monitor = RadarMonitorConfig(
+                enabled=bool(raw_radar.get("enabled", False)),
+                location=str(raw_radar.get("location", "IR")),
+                interval_minutes=int(raw_radar.get("interval_minutes", 60)),
+                change_threshold_percent=float(raw_radar.get("change_threshold_percent", 5.0)),
+                alert_cooldown_hours=int(raw_radar.get("alert_cooldown_hours", 0)),
+            )
+
+        return channels, rss_feeds, iran_filter, radar_monitor
 
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in sources file: {e}") from e

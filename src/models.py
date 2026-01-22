@@ -16,6 +16,21 @@ class SourceType(Enum):
     RSS = auto()
 
 
+class AnomalyStatus(Enum):
+    """Status of a Cloudflare traffic anomaly."""
+
+    UNVERIFIED = "UNVERIFIED"
+    VERIFIED = "VERIFIED"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+
+
+class AlertType(Enum):
+    """Type of radar alert."""
+
+    CLOUDFLARE_ANOMALY = "cloudflare_anomaly"
+    TRAFFIC_CHANGE = "traffic_change"
+
+
 def extract_domain(url: str) -> str:
     """Extract domain from URL, removing www. prefix."""
     try:
@@ -88,3 +103,58 @@ class Summary:
 
         header += "─" * 20 + "\n\n"
         return header + self.content
+
+
+# Cloudflare Radar monitoring models
+
+
+@dataclass
+class Anomaly:
+    """Cloudflare pre-detected traffic anomaly."""
+
+    id: str
+    location: str
+    start_date: datetime
+    end_date: datetime | None
+    status: AnomalyStatus
+    asn: int | None
+
+
+@dataclass
+class TrafficDataPoint:
+    """Single traffic measurement from Cloudflare Radar."""
+
+    timestamp: datetime
+    value: float  # Normalized 0-1
+
+
+@dataclass
+class TrafficChange:
+    """Detected traffic change between consecutive hours."""
+
+    timestamp: datetime
+    previous_value: float
+    current_value: float
+    change_percent: float  # Positive = increase, negative = decrease
+
+    @property
+    def is_drop(self) -> bool:
+        """Return True if this represents a traffic drop."""
+        return self.change_percent < 0
+
+    @property
+    def is_spike(self) -> bool:
+        """Return True if this represents a traffic increase."""
+        return self.change_percent > 0
+
+
+@dataclass
+class RadarAlert:
+    """Alert to be sent to Telegram from Cloudflare Radar monitoring."""
+
+    alert_type: AlertType
+    location: str
+    timestamp: datetime
+    message: str
+    change_percent: float | None = None
+    anomaly_id: str | None = None

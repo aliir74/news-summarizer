@@ -70,6 +70,25 @@ class TelegramBot:
             logger.error(f"Error posting summary: {e}")
             return False
 
+    async def post_alert(self, alert_text: str) -> bool:
+        """Post an alert message to the output channel."""
+        try:
+            # Split message if too long
+            messages = self._split_message(alert_text)
+
+            for msg in messages:
+                await self.client.send_message(
+                    chat_id=self.config.output_channel_id,
+                    text=msg,
+                )
+
+            logger.info("Posted alert message")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error posting alert: {e}")
+            return False
+
     def _split_message(self, text: str) -> list[str]:
         """Split a message into chunks that fit Telegram's limit."""
         if len(text) <= MAX_MESSAGE_LENGTH:
