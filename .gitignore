@@ -58,6 +58,9 @@ htmlcov/
 .last_check
 .last_check.test
 
+# Radar state file
+.radar_state
+
 # Test mode output
 output/
 
