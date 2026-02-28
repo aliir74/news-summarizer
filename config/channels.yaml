@@ -1,12 +1,7 @@
 # Telegram channels to monitor
 # Add channel usernames (without @) or channel IDs
 telegram_channels:
-  # - VahidOnline
-  - akhbar_montakhab
-  - cataphract1
-  - defence_news
-  - Parvazdaroj
-  - geopoliticintel
+  - VahidOnline
 
 # RSS feeds for international news
 rss_feeds:

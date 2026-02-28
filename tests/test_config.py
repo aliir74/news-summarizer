@@ -95,7 +95,7 @@ class TestConfig:
         config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
 
         assert config.summary_interval_minutes == 30
-        assert config.llm_model == "google/gemini-2.5-flash-lite"
+        assert config.llm_model == "google/gemma-2-9b-it"
         assert config.channels == []
 
     def test_config_custom_interval(

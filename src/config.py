@@ -63,7 +63,7 @@ class Config:
 
     # Settings
     summary_interval_minutes: int = 30
-    llm_model: str = "google/gemini-2.5-flash-lite"
+    llm_model: str = "google/gemma-2-9b-it"
 
     # Two-stage summarization settings
     two_stage_summarization: bool = False
@@ -155,7 +155,7 @@ class Config:
             output_channel_id=os.environ["OUTPUT_CHANNEL_ID"],
             openrouter_api_key=os.environ["OPENROUTER_API_KEY"],
             summary_interval_minutes=int(os.getenv("SUMMARY_INTERVAL_MINUTES", "30")),
-            llm_model=os.getenv("LLM_MODEL", "google/gemini-2.5-flash-lite"),
+            llm_model=os.getenv("LLM_MODEL", "google/gemma-2-9b-it"),
             two_stage_summarization=os.getenv("TWO_STAGE_SUMMARIZATION", "false").lower() == "true",
             english_llm_model=os.getenv("ENGLISH_LLM_MODEL", "google/gemma-2-9b-it"),
             channels=channels,
