@@ -20,7 +20,7 @@ def sample_config() -> Config:
         output_channel_id="@test_channel",
         openrouter_api_key="test_openrouter_key",
         summary_interval_minutes=30,
-        llm_model="google/gemma-2-9b-it",
+        llm_model="google/gemini-2.5-flash-lite",
         channels=["channel1", "channel2"],
         rss_feeds=[
             RSSFeed(name="Test Feed", url="https://example.com/feed.xml"),
