@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Telegram Persian News Summarizer Bot - A Python application that monitors Persian news Telegram channels and RSS feeds, generates AI-powered summaries using OpenRouter LLM, and posts summaries to a Telegram channel. Includes keyword-based filtering for Iran-related news from RSS feeds. Deployed on Railway platform.
+Telegram Persian News Summarizer Bot - A Python application that monitors Persian news Telegram channels and RSS feeds, generates AI-powered summaries using OpenRouter LLM, and posts summaries to a Telegram channel. Includes keyword-based filtering for Iran-related news from RSS feeds. Runs locally as a macOS LaunchAgent.
 
 ## Commands
 
@@ -79,9 +79,9 @@ Tests use pytest-asyncio with auto mode. Shared fixtures in tests/conftest.py in
 
 Generate session string with: `uv run python scripts/generate_session.py`
 
-## Deployment
+## CI
 
-Push to main branch triggers GitHub Actions CI (lint, type-check, test) then auto-deploys to Railway if CI passes.
+Push to main branch triggers GitHub Actions CI (lint, type-check, test).
 
 ## Git Identity
 

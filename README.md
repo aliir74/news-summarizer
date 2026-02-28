@@ -11,7 +11,7 @@ A Python application that monitors Persian news Telegram channels, summarizes ne
 - Configurable check interval (default: 30 minutes)
 - Persists last check timestamp to avoid duplicate summaries on restart
 - **Test mode** for local development (writes to file, separate state)
-- Deployable to Railway (free tier)
+- Runs locally as a macOS LaunchAgent (auto-start, auto-restart)
 
 ## Prerequisites
 
@@ -66,7 +66,7 @@ You'll be prompted for:
 - The verification code sent to Telegram
 - Your 2FA password (if enabled)
 
-Save the output session string securely - you'll need it for deployment.
+Save the output session string securely.
 
 ### 6. Configure Environment
 
@@ -169,31 +169,6 @@ uv run ruff check src tests
 uv run pyright src
 ```
 
-## Deployment to Railway
-
-### 1. Create Railway Project
-
-1. Go to [https://railway.app](https://railway.app)
-2. Create a new project
-3. Connect your GitHub repository
-
-### 2. Configure Environment Variables
-
-In Railway dashboard, add these environment variables:
-
-- `TELEGRAM_API_ID`
-- `TELEGRAM_API_HASH`
-- `TELEGRAM_SESSION_STRING`
-- `TELEGRAM_BOT_TOKEN`
-- `OUTPUT_CHANNEL_ID`
-- `OPENROUTER_API_KEY`
-- `SUMMARY_INTERVAL_MINUTES` (optional, default: 30)
-- `LLM_MODEL` (optional, default: google/gemini-2.5-flash-lite)
-
-### 3. Deploy
-
-Railway will automatically deploy when you push to the main branch.
-
 ## Project Structure
 
 ```
@@ -216,9 +191,8 @@ news-summarizer/
 ├── config/
 │   ├── channels.yaml        # Production channel list
 │   └── channels.test.yaml   # Test mode channel list
-├── .github/workflows/       # CI/CD workflows
+├── .github/workflows/       # CI workflow
 ├── pyproject.toml          # Project configuration
-└── railway.toml            # Railway deployment config
 ```
 
 ## Security Notes
@@ -226,7 +200,7 @@ news-summarizer/
 - **Never commit** your `.env` file or session string to git
 - The session string grants full access to your Telegram account
 - If you suspect your session is compromised, terminate all sessions in Telegram settings
-- Store credentials securely in your deployment environment
+- Store credentials securely in your `.env` file
 
 ## License
 
