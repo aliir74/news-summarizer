@@ -11,7 +11,7 @@ A Python application that monitors Persian news Telegram channels, summarizes ne
 - Configurable check interval (default: 30 minutes)
 - Persists last check timestamp to avoid duplicate summaries on restart
 - **Test mode** for local development (writes to file, separate state)
-- Deployable to Railway (free tier)
+- Deployable to Railway
 
 ## Prerequisites
 
@@ -192,7 +192,7 @@ In Railway dashboard, add these environment variables:
 
 ### 3. Deploy
 
-Railway will automatically deploy when you push to the main branch.
+Railway deploys automatically via its GitHub integration when you push to the main branch. There is no deploy workflow in this repo — Railway handles it directly.
 
 ## Project Structure
 

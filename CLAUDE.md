@@ -81,7 +81,7 @@ Generate session string with: `uv run python scripts/generate_session.py`
 
 ## Deployment
 
-Push to main branch triggers GitHub Actions CI (lint, type-check, test) then auto-deploys to Railway if CI passes.
+Push to main branch triggers GitHub Actions CI (lint, type-check, test). Railway deployment is handled separately via Railway's GitHub integration (no deploy workflow in this repo).
 
 ## Git Identity
 
