@@ -58,6 +58,9 @@ htmlcov/
 .last_check
 .last_check.test
 
+# Seen URLs state
+.seen_urls
+
 # Radar state file
 .radar_state
 
