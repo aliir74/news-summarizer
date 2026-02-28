@@ -81,8 +81,8 @@ class Summary:
     sources: list[SourceInfo] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
-    def format_for_telegram(self) -> str:
-        """Format the summary for posting to Telegram."""
+    def format_message(self) -> str:
+        """Format the summary for posting to messaging platforms."""
         # Convert to Tehran timezone
         tehran_time = self.created_at.astimezone(TEHRAN_TZ)
         header = f"📰 خلاصه اخبار - {tehran_time.strftime('%Y-%m-%d %H:%M')} (Tehran)\n"

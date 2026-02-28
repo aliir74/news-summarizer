@@ -1,12 +1,14 @@
 """Tests for the main module."""
 
 import json
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.composite_writer import CompositeOutputWriter
 from src.config import Config
 from src.file_writer import FileWriter
 from src.main import MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer
@@ -474,3 +476,18 @@ class TestTestMode:
     def test_effective_interval_in_production(self, news_summarizer: NewsSummarizer) -> None:
         """Test that production mode uses production interval."""
         assert news_summarizer.config.effective_summary_interval_minutes == 30
+
+    def test_uses_composite_writer_when_bale_enabled(self, sample_config: Config) -> None:
+        """Test that CompositeOutputWriter is used when Bale is enabled."""
+        bale_config = replace(
+            sample_config,
+            bale_bot_token="bale_token",
+            bale_channel_id="@bale_channel",
+        )
+        summarizer = NewsSummarizer(bale_config)
+        assert isinstance(summarizer.output_writer, CompositeOutputWriter)
+
+    def test_uses_telegram_only_when_bale_disabled(self, sample_config: Config) -> None:
+        """Test that only TelegramBot is used when Bale is not configured."""
+        summarizer = NewsSummarizer(sample_config)
+        assert isinstance(summarizer.output_writer, TelegramBot)

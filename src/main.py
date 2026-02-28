@@ -10,7 +10,9 @@ from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from src.bale_bot import BaleBot
 from src.cloudflare_radar import CloudflareRadarMonitor
+from src.composite_writer import CompositeOutputWriter
 from src.config import Config, ConfigError
 from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
@@ -45,13 +47,20 @@ class NewsSummarizer:
         self.rss_reader = RSSReader(config)
         self.iran_filter = IranRelevanceFilter(config.iran_filter)
 
-        # Select output writer based on test mode
+        # Select output writer based on test mode and Bale config
         self.output_writer: OutputWriter
         if config.test_mode:
             self.output_writer = FileWriter(config)
             logger.info("Test mode enabled - writing output to file")
         else:
-            self.output_writer = TelegramBot(config)
+            writers: list[OutputWriter] = [TelegramBot(config)]
+            if config.bale_enabled:
+                writers.append(BaleBot(config))
+                logger.info("Bale output enabled")
+            if len(writers) == 1:
+                self.output_writer = writers[0]
+            else:
+                self.output_writer = CompositeOutputWriter(writers)
 
         self.summarizer = Summarizer(config)
         self.scheduler = AsyncIOScheduler()

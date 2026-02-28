@@ -82,11 +82,20 @@ class Config:
     cloudflare_api_token: str = ""
     radar_monitor: RadarMonitorConfig = field(default_factory=RadarMonitorConfig)
 
+    # Bale Messenger (optional)
+    bale_bot_token: str = ""
+    bale_channel_id: str = ""
+
     # Test mode settings
     test_mode: bool = False
     test_summary_interval_minutes: int = 5
     test_output_dir: Path = field(default_factory=lambda: Path("output"))
     test_state_file: Path = field(default_factory=lambda: Path(".last_check.test"))
+
+    @property
+    def bale_enabled(self) -> bool:
+        """Return whether Bale output is enabled."""
+        return bool(self.bale_bot_token and self.bale_channel_id)
 
     @property
     def effective_summary_interval_minutes(self) -> int:
@@ -161,6 +170,8 @@ class Config:
             channels=channels,
             rss_feeds=rss_feeds,
             iran_filter=iran_filter,
+            bale_bot_token=os.getenv("BALE_BOT_TOKEN", ""),
+            bale_channel_id=os.getenv("BALE_CHANNEL_ID", ""),
             cloudflare_api_token=os.getenv("CLOUDFLARE_API_TOKEN", ""),
             radar_monitor=radar_monitor,
             test_mode=test_mode,

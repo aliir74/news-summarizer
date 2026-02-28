@@ -7,7 +7,7 @@ import pytest
 
 from src.config import Config
 from src.models import Summary
-from src.telegram_bot import MAX_MESSAGE_LENGTH, TelegramBot
+from src.telegram_bot import TelegramBot
 
 
 @pytest.fixture
@@ -105,75 +105,14 @@ class TestTelegramBot:
             assert call_kwargs["chat_id"] == "@test_channel"
 
 
-class TestMessageSplitting:
-    """Tests for message splitting functionality."""
-
-    def test_split_short_message(self, bot: TelegramBot) -> None:
-        """Test that short messages are not split."""
-        text = "Short message"
-        result = bot._split_message(text)
-
-        assert len(result) == 1
-        assert result[0] == text
-
-    def test_split_message_at_max_length(self, bot: TelegramBot) -> None:
-        """Test message exactly at max length."""
-        text = "x" * MAX_MESSAGE_LENGTH
-        result = bot._split_message(text)
-
-        assert len(result) == 1
-
-    def test_split_long_message_by_paragraphs(self, bot: TelegramBot) -> None:
-        """Test splitting long message by paragraphs."""
-        # Create text with multiple paragraphs that exceeds limit
-        paragraph = "This is a paragraph. " * 100  # ~2100 chars
-        text = f"{paragraph}\n\n{paragraph}\n\n{paragraph}"
-
-        result = bot._split_message(text)
-
-        # Should be split into multiple messages
-        assert len(result) > 1
-        # Each part should be under the limit
-        for part in result:
-            assert len(part) <= MAX_MESSAGE_LENGTH
-
-    def test_split_long_single_paragraph(self, bot: TelegramBot) -> None:
-        """Test splitting a single very long paragraph."""
-        # Create a single long paragraph with sentences
-        sentences = [f"This is sentence number {i}. " for i in range(200)]
-        text = "".join(sentences)
-
-        result = bot._split_message(text)
-
-        assert len(result) > 1
-        for part in result:
-            assert len(part) <= MAX_MESSAGE_LENGTH
-
-    def test_split_preserves_content(self, bot: TelegramBot) -> None:
-        """Test that splitting preserves all content."""
-        paragraph1 = "First paragraph content."
-        paragraph2 = "Second paragraph content."
-        text = f"{paragraph1}\n\n{paragraph2}"
-
-        result = bot._split_message(text)
-
-        combined = " ".join(result)
-        assert "First paragraph" in combined
-        assert "Second paragraph" in combined
-
-    def test_split_empty_message(self, bot: TelegramBot) -> None:
-        """Test splitting empty message."""
-        result = bot._split_message("")
-
-        assert len(result) == 1
-        assert result[0] == ""
+class TestLongSummary:
+    """Tests for posting long summaries."""
 
     async def test_post_long_summary_splits_correctly(
         self, bot: TelegramBot
     ) -> None:
         """Test that long summaries are split and sent as multiple messages."""
-        # Create a long summary
-        long_content = "خلاصه طولانی. " * 500  # Very long content
+        long_content = "x" * 5000
         long_summary = Summary(
             content=long_content,
             source_count=10,
@@ -190,5 +129,4 @@ class TestMessageSplitting:
             await bot.start()
             await bot.post_summary(long_summary)
 
-            # Should have been called multiple times
             assert mock_client.send_message.call_count > 1

@@ -100,7 +100,7 @@ class TestSummary:
 
         assert before <= summary.created_at <= after
 
-    def test_format_for_telegram(self) -> None:
+    def test_format_message(self) -> None:
         """Test formatting summary for Telegram posting."""
         # Use Tehran timezone for created_at so output matches expected time
         tehran_time = datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ)
@@ -112,7 +112,7 @@ class TestSummary:
             created_at=tehran_time,
         )
 
-        formatted = summary.format_for_telegram()
+        formatted = summary.format_message()
 
         # Check header elements
         assert "📰" in formatted
@@ -131,7 +131,7 @@ class TestSummary:
         # Check separator
         assert "─" * 20 in formatted
 
-    def test_format_for_telegram_single_channel(self) -> None:
+    def test_format_message_single_channel(self) -> None:
         """Test formatting with a single channel."""
         summary = Summary(
             content="Content",
@@ -140,12 +140,12 @@ class TestSummary:
             created_at=datetime(2024, 1, 15, 12, 0),
         )
 
-        formatted = summary.format_for_telegram()
+        formatted = summary.format_message()
 
         assert "1 خبر" in formatted
         assert "1 کانال" in formatted
 
-    def test_format_for_telegram_mixed_sources(self) -> None:
+    def test_format_message_mixed_sources(self) -> None:
         """Test formatting with both Telegram and RSS sources."""
         tehran_time = datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ)
         summary = Summary(
@@ -161,13 +161,13 @@ class TestSummary:
             created_at=tehran_time,
         )
 
-        formatted = summary.format_for_telegram()
+        formatted = summary.format_message()
 
         assert "@channel_a" in formatted  # Telegram with @
         assert "bbc.co.uk" in formatted  # RSS with domain
         assert "@BBC Persian" not in formatted  # Should NOT have @ for RSS
 
-    def test_format_for_telegram_rss_without_domain(self) -> None:
+    def test_format_message_rss_without_domain(self) -> None:
         """Test formatting RSS source without domain falls back to name."""
         summary = Summary(
             content="Content",
@@ -179,7 +179,7 @@ class TestSummary:
             created_at=datetime(2024, 1, 15, 12, 0),
         )
 
-        formatted = summary.format_for_telegram()
+        formatted = summary.format_message()
 
         assert "Test Feed" in formatted
         assert "@Test Feed" not in formatted
