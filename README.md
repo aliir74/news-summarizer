@@ -86,7 +86,7 @@ TELEGRAM_BOT_TOKEN=your_bot_token
 OUTPUT_CHANNEL_ID=@your_channel
 OPENROUTER_API_KEY=your_openrouter_key
 SUMMARY_INTERVAL_MINUTES=30
-LLM_MODEL=google/gemma-2-9b-it
+LLM_MODEL=google/gemini-2.5-flash-lite
 ```
 
 See [docs/llm-comparison.md](docs/llm-comparison.md) for model options and pricing.
@@ -188,7 +188,7 @@ In Railway dashboard, add these environment variables:
 - `OUTPUT_CHANNEL_ID`
 - `OPENROUTER_API_KEY`
 - `SUMMARY_INTERVAL_MINUTES` (optional, default: 30)
-- `LLM_MODEL` (optional, default: google/gemma-2-9b-it)
+- `LLM_MODEL` (optional, default: google/gemini-2.5-flash-lite)
 
 ### 3. Deploy
 

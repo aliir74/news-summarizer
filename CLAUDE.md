@@ -73,7 +73,7 @@ Tests use pytest-asyncio with auto mode. Shared fixtures in tests/conftest.py in
 
 **Required:** TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING, TELEGRAM_BOT_TOKEN, OUTPUT_CHANNEL_ID, OPENROUTER_API_KEY
 
-**Optional:** SUMMARY_INTERVAL_MINUTES (default: 30), LLM_MODEL (default: google/gemma-2-9b-it)
+**Optional:** SUMMARY_INTERVAL_MINUTES (default: 30), LLM_MODEL (default: google/gemini-2.5-flash-lite)
 
 **Test Mode:** TEST_MODE (default: false), TEST_SUMMARY_INTERVAL_MINUTES (default: 5), TEST_OUTPUT_DIR (default: output), TEST_STATE_FILE (default: .last_check.test)
 
@@ -82,3 +82,34 @@ Generate session string with: `uv run python scripts/generate_session.py`
 ## Deployment
 
 Push to main branch triggers GitHub Actions CI (lint, type-check, test) then auto-deploys to Railway if CI passes.
+
+## Git Identity
+
+This repo is on GitHub under `aliir74` (personal account).
+- Remote URL must use SSH alias: `git@github.com-personal:aliir74/news-summarizer.git`
+- Before pushing or creating PRs, switch gh CLI to `aliir74`: `gh auth switch --user aliir74`
+
+## Local Service (macOS LaunchAgent)
+
+The bot also runs locally as a macOS LaunchAgent that auto-starts on login and restarts on crash.
+
+**Plist:** `~/Library/LaunchAgents/com.aliirani.news-summarizer.plist`
+**Wrapper script:** `scripts/run-service.sh` (loads `.env` and runs the bot)
+**Logs:** `logs/stdout.log`, `logs/stderr.log`
+
+**Note:** `/bin/bash` must have Full Disk Access in System Settings > Privacy & Security (required because the project is in `~/Downloads`).
+
+```bash
+# Check status
+launchctl list | grep news-summarizer
+
+# Start service
+launchctl load ~/Library/LaunchAgents/com.aliirani.news-summarizer.plist
+
+# Stop service
+launchctl unload ~/Library/LaunchAgents/com.aliirani.news-summarizer.plist
+
+# View logs
+tail -f logs/stderr.log
+tail -f logs/stdout.log
+```
