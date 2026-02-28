@@ -5,12 +5,10 @@ import logging
 from pyrogram import Client
 
 from src.config import Config
+from src.message_utils import split_message
 from src.models import Summary
 
 logger = logging.getLogger(__name__)
-
-# Telegram message limit
-MAX_MESSAGE_LENGTH = 4096
 
 
 class TelegramBot:
@@ -48,11 +46,11 @@ class TelegramBot:
 
     async def post_summary(self, summary: Summary) -> bool:
         """Post a summary to the output channel."""
-        formatted = summary.format_for_telegram()
+        formatted = summary.format_message()
 
         try:
             # Split message if too long
-            messages = self._split_message(formatted)
+            messages = split_message(formatted)
 
             for msg in messages:
                 await self.client.send_message(
@@ -73,8 +71,7 @@ class TelegramBot:
     async def post_alert(self, alert_text: str) -> bool:
         """Post an alert message to the output channel."""
         try:
-            # Split message if too long
-            messages = self._split_message(alert_text)
+            messages = split_message(alert_text)
 
             for msg in messages:
                 await self.client.send_message(
@@ -88,41 +85,3 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error posting alert: {e}")
             return False
-
-    def _split_message(self, text: str) -> list[str]:
-        """Split a message into chunks that fit Telegram's limit."""
-        if len(text) <= MAX_MESSAGE_LENGTH:
-            return [text]
-
-        messages = []
-        current = ""
-
-        # Split by paragraphs first
-        paragraphs = text.split("\n\n")
-
-        for para in paragraphs:
-            # If adding this paragraph exceeds the limit
-            if len(current) + len(para) + 2 > MAX_MESSAGE_LENGTH:
-                if current:
-                    messages.append(current.strip())
-                    current = ""
-
-                # If single paragraph is too long, split by sentences
-                if len(para) > MAX_MESSAGE_LENGTH:
-                    sentences = para.split(". ")
-                    for sentence in sentences:
-                        if len(current) + len(sentence) + 2 > MAX_MESSAGE_LENGTH:
-                            if current:
-                                messages.append(current.strip())
-                            current = sentence
-                        else:
-                            current = current + ". " + sentence if current else sentence
-                else:
-                    current = para
-            else:
-                current = current + "\n\n" + para if current else para
-
-        if current:
-            messages.append(current.strip())
-
-        return messages

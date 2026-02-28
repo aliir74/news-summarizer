@@ -73,7 +73,7 @@ Tests use pytest-asyncio with auto mode. Shared fixtures in tests/conftest.py in
 
 **Required:** TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_STRING, TELEGRAM_BOT_TOKEN, OUTPUT_CHANNEL_ID, OPENROUTER_API_KEY
 
-**Optional:** SUMMARY_INTERVAL_MINUTES (default: 30), LLM_MODEL (default: google/gemini-2.5-flash-lite)
+**Optional:** SUMMARY_INTERVAL_MINUTES (default: 30), LLM_MODEL (default: google/gemini-2.5-flash-lite), BALE_BOT_TOKEN (Bale messenger bot token), BALE_CHANNEL_ID (Bale output channel)
 
 **Test Mode:** TEST_MODE (default: false), TEST_SUMMARY_INTERVAL_MINUTES (default: 5), TEST_OUTPUT_DIR (default: output), TEST_STATE_FILE (default: .last_check.test)
 

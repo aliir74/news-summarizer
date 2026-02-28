@@ -29,7 +29,7 @@ class FileWriter:
 
     async def post_summary(self, summary: Summary) -> bool:
         """Write a summary to the output file."""
-        formatted = summary.format_for_telegram()
+        formatted = summary.format_message()
 
         try:
             # Append to file with separator

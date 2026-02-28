@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -181,15 +182,10 @@ def sample_rss_xml() -> str:
 
 
 @pytest.fixture
-def radar_config() -> Config:
+def radar_config(sample_config: Config) -> Config:
     """Create a sample configuration with radar monitoring enabled."""
-    return Config(
-        telegram_api_id=12345,
-        telegram_api_hash="test_api_hash",
-        telegram_session_string="test_session_string",
-        telegram_bot_token="test_bot_token",
-        output_channel_id="@test_channel",
-        openrouter_api_key="test_openrouter_key",
+    return replace(
+        sample_config,
         cloudflare_api_token="test_cloudflare_token",
         radar_monitor=RadarMonitorConfig(
             enabled=True,

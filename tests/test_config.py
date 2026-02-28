@@ -448,3 +448,80 @@ class TestTestModeConfig:
         assert config.test_summary_interval_minutes == 5
         assert config.test_output_dir == Path("output")
         assert config.test_state_file == Path(".last_check.test")
+
+
+class TestBaleConfig:
+    """Tests for Bale configuration."""
+
+    def test_bale_enabled_when_both_set(self) -> None:
+        """Test bale_enabled is True when both token and channel are set."""
+        config = Config(
+            telegram_api_id=12345,
+            telegram_api_hash="hash",
+            telegram_session_string="session",
+            telegram_bot_token="token",
+            output_channel_id="@channel",
+            openrouter_api_key="key",
+            bale_bot_token="bale_token",
+            bale_channel_id="@bale_channel",
+        )
+        assert config.bale_enabled is True
+
+    def test_bale_disabled_when_token_missing(self) -> None:
+        """Test bale_enabled is False when token is empty."""
+        config = Config(
+            telegram_api_id=12345,
+            telegram_api_hash="hash",
+            telegram_session_string="session",
+            telegram_bot_token="token",
+            output_channel_id="@channel",
+            openrouter_api_key="key",
+            bale_bot_token="",
+            bale_channel_id="@bale_channel",
+        )
+        assert config.bale_enabled is False
+
+    def test_bale_disabled_when_channel_missing(self) -> None:
+        """Test bale_enabled is False when channel is empty."""
+        config = Config(
+            telegram_api_id=12345,
+            telegram_api_hash="hash",
+            telegram_session_string="session",
+            telegram_bot_token="token",
+            output_channel_id="@channel",
+            openrouter_api_key="key",
+            bale_bot_token="bale_token",
+            bale_channel_id="",
+        )
+        assert config.bale_enabled is False
+
+    def test_bale_disabled_by_default(self) -> None:
+        """Test bale_enabled is False by default."""
+        config = Config(
+            telegram_api_id=12345,
+            telegram_api_hash="hash",
+            telegram_session_string="session",
+            telegram_bot_token="token",
+            output_channel_id="@channel",
+            openrouter_api_key="key",
+        )
+        assert config.bale_enabled is False
+
+    def test_bale_from_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test loading Bale config from environment variables."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("BALE_BOT_TOKEN", "bale_token")
+        monkeypatch.setenv("BALE_CHANNEL_ID", "@bale_channel")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.bale_bot_token == "bale_token"
+        assert config.bale_channel_id == "@bale_channel"
+        assert config.bale_enabled is True
