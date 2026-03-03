@@ -8,6 +8,7 @@ import pytest
 
 from src.config import Config, ConfigError, IranFilter, _load_sources_yaml
 
+
 class TestConfig:
     """Tests for the Config class."""
 
