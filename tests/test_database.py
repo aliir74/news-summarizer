@@ -272,6 +272,39 @@ class TestFingerprintDatabase:
         with pytest.raises(RuntimeError, match="not initialized"):
             db.count()
 
+    def test_get_recent(self, tmp_path: Path) -> None:
+        """Test getting all recent fingerprints across topics."""
+        db_path = tmp_path / "test.db"
+        db = FingerprintDatabase(db_path)
+        db.init_db()
+
+        # Store fingerprints with different topics
+        for i, topic in enumerate(["politics", "sports", "economy"]):
+            fp = ArticleFingerprint(
+                url=f"https://example.com/{i}",
+                title=f"Article {i}",
+                topic=topic,
+                entities=["Iran"],
+                event_type="report",
+                keywords=["test"],
+                source="Reuters",
+            )
+            db.store_fingerprint(fp)
+
+        results = db.get_recent(days=3)
+        assert len(results) == 3
+        topics = {r.topic for r in results}
+        assert topics == {"politics", "sports", "economy"}
+        db.close()
+
+    def test_get_recent_before_init_raises_error(self, tmp_path: Path) -> None:
+        """Test that get_recent raises RuntimeError before init_db."""
+        db_path = tmp_path / "test.db"
+        db = FingerprintDatabase(db_path)
+
+        with pytest.raises(RuntimeError, match="not initialized"):
+            db.get_recent()
+
     def test_close_without_init(self, tmp_path: Path) -> None:
         """Test that close without init is safe."""
         db_path = tmp_path / "test.db"

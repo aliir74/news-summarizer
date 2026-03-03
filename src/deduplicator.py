@@ -20,8 +20,8 @@ Article:
 
 Return this exact JSON structure:
 {{
-  "topic": "main topic in 1-3 words",
-  "entities": ["list", "of", "key", "entities"],
+  "topic": "broad category in 1-2 words (e.g. diplomacy, military, economy, politics, sanctions)",
+  "entities": ["key named entities: countries, organizations, people, locations"],
   "event_type": "announcement|reaction|analysis|report|other",
   "keywords": ["3-5", "key", "words"]
 }}"""
@@ -136,21 +136,16 @@ class Deduplicator:
             logger.debug(f"Duplicate URL found: {fingerprint.url}")
             return True
 
-        # Get recent articles with same topic
-        recent = self._db.get_recent_by_topic(
-            fingerprint.topic,
+        # Get all recent articles regardless of topic
+        recent = self._db.get_recent(
             days=self._dedup_config.ttl_days,
         )
 
         if not recent:
-            logger.debug(
-                f"No recent articles with topic '{fingerprint.topic}' found - article is unique"
-            )
+            logger.debug("No recent articles found - article is unique")
             return False
 
-        logger.debug(
-            f"Comparing against {len(recent)} recent articles with topic '{fingerprint.topic}'"
-        )
+        logger.debug(f"Comparing against {len(recent)} recent articles")
 
         new_entities = {e.lower() for e in fingerprint.entities}
 
