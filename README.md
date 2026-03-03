@@ -1,5 +1,8 @@
 # Telegram Persian News Summarizer Bot
 
+[![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/aliir74)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/aliir74)
+
 A Python application that monitors Persian news Telegram channels, summarizes new posts using AI (OpenRouter LLM), and posts the summaries to your own Telegram channel.
 
 ## Features
@@ -201,6 +204,14 @@ news-summarizer/
 - The session string grants full access to your Telegram account
 - If you suspect your session is compromised, terminate all sessions in Telegram settings
 - Store credentials securely in your `.env` file
+
+## Support This Project
+
+If you find this bot useful, consider supporting its development:
+
+- Star this repo
+- Report bugs and submit PRs
+- [Sponsor on GitHub](https://github.com/sponsors/aliir74) or [Buy me a coffee](https://www.buymeacoffee.com/aliir74)
 
 ## License
 
