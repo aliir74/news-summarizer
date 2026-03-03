@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from src.bale_bot import BaleBot
 from src.cloudflare_radar import CloudflareRadarMonitor
 from src.composite_writer import CompositeOutputWriter
 from src.config import Config, ConfigError
+from src.deduplicator import Deduplicator
 from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
 from src.output_writer import OutputWriter
@@ -22,9 +24,10 @@ from src.summarizer import Summarizer
 from src.telegram_bot import TelegramBot
 from src.telegram_reader import TelegramReader
 
-# Configure logging
+# Configure logging (level configurable via LOG_LEVEL env var)
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, log_level, logging.INFO),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
@@ -63,6 +66,7 @@ class NewsSummarizer:
                 self.output_writer = CompositeOutputWriter(writers)
 
         self.summarizer = Summarizer(config)
+        self.deduplicator = Deduplicator(config)
         self.scheduler = AsyncIOScheduler()
         self._last_check: datetime | None = None
         self._seen_urls: set[str] = set()
@@ -97,6 +101,11 @@ class NewsSummarizer:
         # Start radar monitor if enabled
         if self.radar_monitor:
             await self.radar_monitor.start()
+
+        # Start deduplicator if enabled
+        if self.config.deduplication.enabled:
+            self.deduplicator.start()
+            logger.info("Deduplicator initialized")
 
         # Schedule the summarization job
         self.scheduler.add_job(
@@ -144,6 +153,10 @@ class NewsSummarizer:
         self._save_last_check()
         self._save_seen_urls()
 
+        # Stop deduplicator if enabled
+        if self.config.deduplication.enabled:
+            self.deduplicator.stop()
+
         # Stop clients
         await self.telegram_reader.stop()
         await self.rss_reader.stop()
@@ -181,7 +194,17 @@ class NewsSummarizer:
             # Merge all messages
             messages = telegram_messages + filtered_rss
             messages.sort(key=lambda m: m.timestamp, reverse=True)
-            logger.info(f"Total {len(messages)} messages to summarize")
+            logger.info(f"Total {len(messages)} messages before deduplication")
+
+            # Apply deduplication if enabled
+            if self.config.deduplication.enabled and messages:
+                messages = self.deduplicator.process_messages(messages)
+                logger.info(f"After deduplication: {len(messages)} unique messages")
+
+                # Cleanup old fingerprints periodically
+                deleted = self.deduplicator.cleanup()
+                if deleted > 0:
+                    logger.info(f"Cleaned up {deleted} old fingerprints")
 
             if messages:
                 # Generate summary

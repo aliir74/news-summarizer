@@ -48,3 +48,9 @@ radar_monitor:
   interval_minutes: 60  # Check every hour (matches data granularity)
   change_threshold_percent: 5.0  # Alert on >=5% change hour-over-hour
   alert_cooldown_hours: 0  # 0 = alert every hour if threshold met
+
+# Deduplication configuration (LLM-based entity extraction)
+deduplication:
+  enabled: true
+  similarity_threshold: 0.5  # 50% entity overlap = duplicate
+  ttl_days: 3                # Keep fingerprints for 3 days

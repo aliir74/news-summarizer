@@ -48,6 +48,15 @@ class RadarMonitorConfig:
 
 
 @dataclass
+class DeduplicationConfig:
+    """Configuration for article deduplication."""
+
+    enabled: bool = True
+    similarity_threshold: float = 0.5  # 50% entity overlap = duplicate
+    ttl_days: int = 3  # Keep fingerprints for 3 days
+
+
+@dataclass
 class Config:
     """Application configuration."""
 
@@ -85,6 +94,10 @@ class Config:
     # Bale Messenger (optional)
     bale_bot_token: str = ""
     bale_channel_id: str = ""
+
+    # Deduplication configuration
+    deduplication: DeduplicationConfig = field(default_factory=DeduplicationConfig)
+    dedup_db_path: str = ".dedup.db"
 
     # Test mode settings
     test_mode: bool = False
@@ -134,6 +147,7 @@ class Config:
         rss_feeds: list[RSSFeed] = []
         iran_filter = IranFilter()
         radar_monitor = RadarMonitorConfig()
+        deduplication = DeduplicationConfig()
 
         # Determine channels file based on test mode
         if channels_file is None:
@@ -148,7 +162,9 @@ class Config:
 
         channels_path = Path(channels_file)
         if channels_path.exists():
-            channels, rss_feeds, iran_filter, radar_monitor = _load_sources_yaml(channels_path)
+            channels, rss_feeds, iran_filter, radar_monitor, deduplication = _load_sources_yaml(
+                channels_path
+            )
 
         # Parse API ID as integer
         try:
@@ -174,6 +190,7 @@ class Config:
             bale_channel_id=os.getenv("BALE_CHANNEL_ID", ""),
             cloudflare_api_token=os.getenv("CLOUDFLARE_API_TOKEN", ""),
             radar_monitor=radar_monitor,
+            deduplication=deduplication,
             test_mode=test_mode,
             test_summary_interval_minutes=int(os.getenv("TEST_SUMMARY_INTERVAL_MINUTES", "5")),
             test_output_dir=Path(os.getenv("TEST_OUTPUT_DIR", "output")),
@@ -183,14 +200,14 @@ class Config:
 
 def _load_sources_yaml(
     path: Path,
-) -> tuple[list[str], list[RSSFeed], IranFilter, RadarMonitorConfig]:
+) -> tuple[list[str], list[RSSFeed], IranFilter, RadarMonitorConfig, DeduplicationConfig]:
     """Load sources configuration from YAML file."""
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
 
         if not data:
-            return [], [], IranFilter(), RadarMonitorConfig()
+            return [], [], IranFilter(), RadarMonitorConfig(), DeduplicationConfig()
 
         # Load Telegram channels (support both old 'channels' and new 'telegram_channels' keys)
         channels: list[str] = []
@@ -232,7 +249,20 @@ def _load_sources_yaml(
                 alert_cooldown_hours=int(raw_radar.get("alert_cooldown_hours", 0)),
             )
 
-        return channels, rss_feeds, iran_filter, radar_monitor
+        # Load deduplication configuration
+        deduplication = DeduplicationConfig()
+        raw_dedup = data.get("deduplication")
+        if isinstance(raw_dedup, dict):
+            enabled = raw_dedup.get("enabled", True)
+            similarity_threshold = raw_dedup.get("similarity_threshold", 0.5)
+            ttl_days = raw_dedup.get("ttl_days", 3)
+            deduplication = DeduplicationConfig(
+                enabled=bool(enabled),
+                similarity_threshold=float(similarity_threshold),
+                ttl_days=int(ttl_days),
+            )
+
+        return channels, rss_feeds, iran_filter, radar_monitor, deduplication
 
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in sources file: {e}") from e

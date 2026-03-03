@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.config import Config, IranFilter, RadarMonitorConfig, RSSFeed
+from src.config import Config, DeduplicationConfig, IranFilter, RadarMonitorConfig, RSSFeed
 from src.models import Anomaly, AnomalyStatus, Message, SourceType, Summary
 
 
@@ -27,6 +27,7 @@ def sample_config() -> Config:
             RSSFeed(name="Test Feed", url="https://example.com/feed.xml"),
         ],
         iran_filter=IranFilter(enabled=True, keywords=["iran", "tehran"]),
+        deduplication=DeduplicationConfig(enabled=False),
     )
 
 
