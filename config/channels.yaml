@@ -52,5 +52,5 @@ radar_monitor:
 # Deduplication configuration (LLM-based entity extraction)
 deduplication:
   enabled: true
-  similarity_threshold: 0.5  # 50% entity overlap = duplicate
+  similarity_threshold: 0.6  # 60% entity overlap = duplicate
   ttl_days: 3                # Keep fingerprints for 3 days

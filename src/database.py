@@ -102,6 +102,21 @@ class FingerprintDatabase:
             logger.debug(f"URL already in database: {fp.url}")
             return False
 
+    @staticmethod
+    def _row_to_fingerprint(row: sqlite3.Row) -> ArticleFingerprint:
+        """Convert a database row to an ArticleFingerprint."""
+        return ArticleFingerprint(
+            id=row["id"],
+            url=row["url"],
+            title=row["title"],
+            topic=row["topic"],
+            entities=json.loads(row["entities"]),
+            event_type=row["event_type"],
+            keywords=json.loads(row["keywords"]),
+            timestamp=datetime.fromisoformat(row["timestamp"]),
+            source=row["source"],
+        )
+
     def get_recent_by_topic(
         self, topic: str, days: int = 3
     ) -> list[ArticleFingerprint]:
@@ -118,22 +133,23 @@ class FingerprintDatabase:
             (topic, f"-{days} days"),
         )
 
-        results = []
-        for row in cursor:
-            results.append(
-                ArticleFingerprint(
-                    id=row["id"],
-                    url=row["url"],
-                    title=row["title"],
-                    topic=row["topic"],
-                    entities=json.loads(row["entities"]),
-                    event_type=row["event_type"],
-                    keywords=json.loads(row["keywords"]),
-                    timestamp=datetime.fromisoformat(row["timestamp"]),
-                    source=row["source"],
-                )
-            )
-        return results
+        return [self._row_to_fingerprint(row) for row in cursor]
+
+    def get_recent(self, days: int = 3) -> list[ArticleFingerprint]:
+        """Get all recent fingerprints within the time window."""
+        if not self._conn:
+            raise RuntimeError("Database not initialized. Call init_db() first.")
+
+        cursor = self._conn.execute(
+            """
+            SELECT id, url, title, topic, entities, event_type, keywords, timestamp, source
+            FROM fingerprints
+            WHERE timestamp > datetime('now', ?)
+            """,
+            (f"-{days} days",),
+        )
+
+        return [self._row_to_fingerprint(row) for row in cursor]
 
     def url_exists(self, url: str) -> bool:
         """Check if a URL already exists in the database."""

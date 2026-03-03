@@ -25,7 +25,7 @@ def mock_config(tmp_path: Path) -> Config:
         llm_model="test-model",
         deduplication=DeduplicationConfig(
             enabled=True,
-            similarity_threshold=0.5,
+            similarity_threshold=0.6,
             ttl_days=3,
         ),
         dedup_db_path=str(tmp_path / ".dedup.db"),
@@ -269,8 +269,8 @@ class TestDeduplicator:
         assert dedup.is_duplicate(different) is False
         dedup.stop()
 
-    def test_is_duplicate_different_topic(self, mock_config: Config) -> None:
-        """Test that different topics are not duplicates."""
+    def test_is_duplicate_cross_topic(self, mock_config: Config) -> None:
+        """Test that high entity overlap across topics IS a duplicate."""
         dedup = Deduplicator(mock_config)
         dedup.start()
 
@@ -285,18 +285,81 @@ class TestDeduplicator:
         )
         dedup.store(original)
 
-        # Same entities but different topic
+        # Same entities but different topic — should still be duplicate
+        similar = ArticleFingerprint(
+            url="https://example.com/different",
+            title="Different",
+            topic="diplomacy",
+            entities=["Iran", "EU"],
+            event_type="report",
+            keywords=["agreement"],
+            source="BBC",
+        )
+
+        assert dedup.is_duplicate(similar) is True
+        dedup.stop()
+
+    def test_is_duplicate_different_entities_different_topic(
+        self, mock_config: Config
+    ) -> None:
+        """Test that low entity overlap with different topic is NOT duplicate."""
+        dedup = Deduplicator(mock_config)
+        dedup.start()
+
+        original = ArticleFingerprint(
+            url="https://example.com/original",
+            title="Original",
+            topic="politics",
+            entities=["Iran", "EU", "IAEA", "Vienna"],
+            event_type="announcement",
+            keywords=["nuclear"],
+            source="Reuters",
+        )
+        dedup.store(original)
+
+        # Different entities and different topic
         different = ArticleFingerprint(
             url="https://example.com/different",
             title="Different",
-            topic="sports",  # Different topic
-            entities=["Iran", "EU"],
+            topic="sports",
+            entities=["Iran", "FIFA", "Qatar"],
             event_type="report",
             keywords=["football"],
             source="BBC",
         )
 
         assert dedup.is_duplicate(different) is False
+        dedup.stop()
+
+    def test_is_duplicate_cross_topic_high_overlap(self, mock_config: Config) -> None:
+        """Regression test: same event with variant topic labels must be caught."""
+        dedup = Deduplicator(mock_config)
+        dedup.start()
+
+        # Article about Iran-EU nuclear talks labeled as "nuclear negotiations"
+        original = ArticleFingerprint(
+            url="https://example.com/original",
+            title="Iran and EU resume nuclear talks in Vienna",
+            topic="nuclear negotiations",
+            entities=["Iran", "EU", "Vienna", "IAEA"],
+            event_type="announcement",
+            keywords=["nuclear", "talks"],
+            source="Reuters",
+        )
+        dedup.store(original)
+
+        # Same event but labeled with a different topic
+        variant = ArticleFingerprint(
+            url="https://example.com/variant",
+            title="EU-Iran nuclear discussions continue",
+            topic="diplomacy",
+            entities=["Iran", "EU", "Vienna", "IAEA"],
+            event_type="report",
+            keywords=["nuclear", "diplomacy"],
+            source="BBC",
+        )
+
+        assert dedup.is_duplicate(variant) is True
         dedup.stop()
 
     def test_is_duplicate_case_insensitive(self, mock_config: Config) -> None:
