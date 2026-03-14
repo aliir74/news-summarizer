@@ -148,6 +148,7 @@ class Deduplicator:
         logger.debug(f"Comparing against {len(recent)} recent articles")
 
         new_entities = {e.lower() for e in fingerprint.entities}
+        new_keywords = {k.lower() for k in fingerprint.keywords}
 
         for stored in recent:
             stored_entities = {e.lower() for e in stored.entities}
@@ -157,7 +158,13 @@ class Deduplicator:
             total = len(stored_entities | new_entities)
 
             if total > 0:
-                similarity = overlap / total
+                entity_similarity = overlap / total
+
+                # Calculate keyword overlap
+                stored_keywords = {k.lower() for k in stored.keywords}
+                keyword_overlap = len(stored_keywords & new_keywords)
+                keyword_total = len(stored_keywords | new_keywords)
+                keyword_similarity = keyword_overlap / keyword_total if keyword_total > 0 else 1.0
 
                 # Log comparison details at DEBUG level
                 logger.debug(
@@ -165,15 +172,20 @@ class Deduplicator:
                     f"  Stored: '{stored.title[:50]}...'\n"
                     f"  Stored entities: {stored.entities}\n"
                     f"  New entities: {list(new_entities)}\n"
-                    f"  Overlap: {overlap}/{total} = {similarity:.2%}\n"
-                    f"  Threshold: {self._dedup_config.similarity_threshold:.2%}"
+                    f"  Entity overlap: {overlap}/{total} = {entity_similarity:.2%}\n"
+                    f"  Keyword overlap: {keyword_overlap}/{keyword_total} = {keyword_similarity:.2%}\n"
+                    f"  Thresholds: entity={self._dedup_config.similarity_threshold:.2%}, "
+                    f"keyword={self._dedup_config.keyword_similarity_threshold:.2%}"
                 )
 
-                if similarity >= self._dedup_config.similarity_threshold:
+                if (
+                    entity_similarity >= self._dedup_config.similarity_threshold
+                    and keyword_similarity >= self._dedup_config.keyword_similarity_threshold
+                ):
                     logger.info(
                         f"DUPLICATE: '{fingerprint.title[:50]}...' "
                         f"matches '{stored.title[:50]}...' "
-                        f"(similarity: {similarity:.2%} >= threshold {self._dedup_config.similarity_threshold:.2%})"
+                        f"(entity: {entity_similarity:.2%}, keyword: {keyword_similarity:.2%})"
                     )
                     return True
 
@@ -210,7 +222,7 @@ class Deduplicator:
         extraction_failures = 0
 
         for i, msg in enumerate(messages, 1):
-            logger.debug(f"Processing message {i}/{len(messages)}: {msg.text[:50]}...")
+            logger.debug(f"Processing message {i}/{len(messages)}: {str(msg.text)[:50]}...")
 
             # Extract features
             fingerprint = self.extract_features(msg)

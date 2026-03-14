@@ -53,6 +53,7 @@ class DeduplicationConfig:
 
     enabled: bool = True
     similarity_threshold: float = 0.5  # 50% entity overlap = duplicate
+    keyword_similarity_threshold: float = 0.3  # 30% keyword overlap required
     ttl_days: int = 3  # Keep fingerprints for 3 days
 
 
@@ -255,10 +256,12 @@ def _load_sources_yaml(
         if isinstance(raw_dedup, dict):
             enabled = raw_dedup.get("enabled", True)
             similarity_threshold = raw_dedup.get("similarity_threshold", 0.5)
+            keyword_similarity_threshold = raw_dedup.get("keyword_similarity_threshold", 0.3)
             ttl_days = raw_dedup.get("ttl_days", 3)
             deduplication = DeduplicationConfig(
                 enabled=bool(enabled),
                 similarity_threshold=float(similarity_threshold),
+                keyword_similarity_threshold=float(keyword_similarity_threshold),
                 ttl_days=int(ttl_days),
             )
 
