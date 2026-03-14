@@ -64,7 +64,7 @@ class TelegramReader:
                 if not msg.text and not msg.caption:
                     continue
 
-                text = msg.text or msg.caption or ""
+                text = str(msg.text or msg.caption or "")
 
                 messages.append(
                     Message(
