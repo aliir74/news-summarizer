@@ -53,4 +53,5 @@ radar_monitor:
 deduplication:
   enabled: true
   similarity_threshold: 0.6  # 60% entity overlap = duplicate
+  keyword_similarity_threshold: 0.3  # 30% keyword overlap required
   ttl_days: 3                # Keep fingerprints for 3 days

@@ -26,6 +26,7 @@ def mock_config(tmp_path: Path) -> Config:
         deduplication=DeduplicationConfig(
             enabled=True,
             similarity_threshold=0.6,
+            keyword_similarity_threshold=0.3,
             ttl_days=3,
         ),
         dedup_db_path=str(tmp_path / ".dedup.db"),
@@ -209,7 +210,7 @@ class TestDeduplicator:
         dedup.stop()
 
     def test_is_duplicate_entity_overlap(self, mock_config: Config) -> None:
-        """Test duplicate detection by entity overlap."""
+        """Test duplicate detection by entity and keyword overlap."""
         dedup = Deduplicator(mock_config)
         dedup.start()
 
@@ -220,19 +221,19 @@ class TestDeduplicator:
             topic="nuclear_diplomacy",
             entities=["Iran", "EU", "IAEA"],
             event_type="announcement",
-            keywords=["nuclear"],
+            keywords=["nuclear", "deal", "agreement"],
             source="Reuters",
         )
         dedup.store(original)
 
-        # Similar article with 66% entity overlap (2/3)
+        # Similar article with 66% entity overlap and keyword overlap
         similar = ArticleFingerprint(
             url="https://example.com/similar",
             title="Similar Article",
             topic="nuclear_diplomacy",
             entities=["Iran", "EU"],  # 2 out of 3 entities match
             event_type="report",
-            keywords=["deal"],
+            keywords=["nuclear", "deal"],  # 2 out of 3 keywords match
             source="BBC",
         )
 
@@ -270,7 +271,7 @@ class TestDeduplicator:
         dedup.stop()
 
     def test_is_duplicate_cross_topic(self, mock_config: Config) -> None:
-        """Test that high entity overlap across topics IS a duplicate."""
+        """Test that high entity and keyword overlap across topics IS a duplicate."""
         dedup = Deduplicator(mock_config)
         dedup.start()
 
@@ -280,19 +281,19 @@ class TestDeduplicator:
             topic="politics",
             entities=["Iran", "EU"],
             event_type="announcement",
-            keywords=["nuclear"],
+            keywords=["nuclear", "agreement"],
             source="Reuters",
         )
         dedup.store(original)
 
-        # Same entities but different topic — should still be duplicate
+        # Same entities, overlapping keywords, different topic — still duplicate
         similar = ArticleFingerprint(
             url="https://example.com/different",
             title="Different",
             topic="diplomacy",
             entities=["Iran", "EU"],
             event_type="report",
-            keywords=["agreement"],
+            keywords=["nuclear", "deal"],
             source="BBC",
         )
 
@@ -348,22 +349,83 @@ class TestDeduplicator:
         )
         dedup.store(original)
 
-        # Same event but labeled with a different topic
+        # Same event but labeled with a different topic — keywords also overlap
         variant = ArticleFingerprint(
             url="https://example.com/variant",
             title="EU-Iran nuclear discussions continue",
             topic="diplomacy",
             entities=["Iran", "EU", "Vienna", "IAEA"],
             event_type="report",
-            keywords=["nuclear", "diplomacy"],
+            keywords=["nuclear", "talks", "diplomacy"],
             source="BBC",
         )
 
         assert dedup.is_duplicate(variant) is True
         dedup.stop()
 
+    def test_is_duplicate_high_entity_low_keyword(self, mock_config: Config) -> None:
+        """Test that high entity overlap but low keyword overlap is NOT duplicate."""
+        dedup = Deduplicator(mock_config)
+        dedup.start()
+
+        # Store article about protests
+        original = ArticleFingerprint(
+            url="https://example.com/protests",
+            title="Thousands march worldwide in solidarity with Iran",
+            topic="military",
+            entities=["Iran", "US", "Israel"],
+            event_type="report",
+            keywords=["protests", "solidarity", "march", "worldwide"],
+            source="Reuters",
+        )
+        dedup.store(original)
+
+        # Different story about civilian experience — same entities, different keywords
+        different = ArticleFingerprint(
+            url="https://example.com/civilians",
+            title="Our hearts were shaking: Tehran residents endure bombing",
+            topic="military",
+            entities=["Iran", "US", "Israel"],  # 100% entity overlap
+            event_type="report",
+            keywords=["civilians", "bombing", "Tehran", "endure"],  # 0% keyword overlap
+            source="BBC",
+        )
+
+        assert dedup.is_duplicate(different) is False
+        dedup.stop()
+
+    def test_is_duplicate_both_overlap(self, mock_config: Config) -> None:
+        """Test that both entity and keyword overlap above threshold = duplicate."""
+        dedup = Deduplicator(mock_config)
+        dedup.start()
+
+        original = ArticleFingerprint(
+            url="https://example.com/original",
+            title="Iran nuclear deal talks resume in Vienna",
+            topic="diplomacy",
+            entities=["Iran", "EU", "IAEA"],
+            event_type="announcement",
+            keywords=["nuclear", "deal", "talks", "Vienna"],
+            source="Reuters",
+        )
+        dedup.store(original)
+
+        # Same story from different source — both entity and keyword overlap high
+        similar = ArticleFingerprint(
+            url="https://example.com/similar",
+            title="Nuclear negotiations continue between Iran and EU",
+            topic="diplomacy",
+            entities=["Iran", "EU", "IAEA"],  # 100% entity overlap
+            event_type="report",
+            keywords=["nuclear", "deal", "negotiations"],  # 2/5 = 40% keyword overlap
+            source="BBC",
+        )
+
+        assert dedup.is_duplicate(similar) is True
+        dedup.stop()
+
     def test_is_duplicate_case_insensitive(self, mock_config: Config) -> None:
-        """Test that entity comparison is case insensitive."""
+        """Test that entity and keyword comparison is case insensitive."""
         dedup = Deduplicator(mock_config)
         dedup.start()
 
@@ -373,19 +435,19 @@ class TestDeduplicator:
             topic="news",
             entities=["IRAN", "EU"],
             event_type="announcement",
-            keywords=["nuclear"],
+            keywords=["NUCLEAR", "deal"],
             source="Reuters",
         )
         dedup.store(original)
 
-        # Same entities in different case
+        # Same entities and keywords in different case
         similar = ArticleFingerprint(
             url="https://example.com/similar",
             title="Similar",
             topic="news",
             entities=["iran", "eu"],  # Lowercase
             event_type="report",
-            keywords=["deal"],
+            keywords=["nuclear", "Deal"],  # Mixed case
             source="BBC",
         )
 
