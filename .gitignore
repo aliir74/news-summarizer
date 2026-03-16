@@ -61,6 +61,9 @@ htmlcov/
 # Seen URLs state
 .seen_urls
 
+# Bale retry queue
+.bale_retry_queue
+
 # Radar state file
 .radar_state
 

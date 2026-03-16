@@ -50,6 +50,8 @@ class NewsSummarizer:
         self.rss_reader = RSSReader(config)
         self.iran_filter = IranRelevanceFilter(config.iran_filter)
 
+        self.summarizer = Summarizer(config)
+
         # Select output writer based on test mode and Bale config
         self.output_writer: OutputWriter
         if config.test_mode:
@@ -58,14 +60,12 @@ class NewsSummarizer:
         else:
             writers: list[OutputWriter] = [TelegramBot(config)]
             if config.bale_enabled:
-                writers.append(BaleBot(config))
+                writers.append(BaleBot(config, self.summarizer))
                 logger.info("Bale output enabled")
             if len(writers) == 1:
                 self.output_writer = writers[0]
             else:
                 self.output_writer = CompositeOutputWriter(writers)
-
-        self.summarizer = Summarizer(config)
         self.deduplicator = Deduplicator(config)
         self.scheduler = AsyncIOScheduler()
         self._last_check: datetime | None = None
