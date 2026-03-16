@@ -9,6 +9,7 @@ from src.config import Config
 from src.models import Message, SourceType
 from src.summarizer import (
     ENGLISH_SUMMARY_PROMPT,
+    RE_SUMMARIZE_PROMPT,
     SUMMARIZATION_PROMPT,
     TRANSLATION_PROMPT,
     Summarizer,
@@ -448,6 +449,40 @@ class TestTimestampFormat:
         # Both dates should be present and distinguishable
         assert "2024-01-10" in formatted
         assert "2024-01-15" in formatted
+
+
+class TestReSummarize:
+    """Tests for the re_summarize method."""
+
+    def test_re_summarize_success(self, summarizer: Summarizer) -> None:
+        """Test successful re-summarization of multiple texts."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "خلاصه ترکیبی"
+
+        with patch.object(
+            summarizer._client.chat.completions, "create", return_value=mock_response
+        ):
+            result = summarizer.re_summarize(["summary 1", "summary 2"])
+
+        assert result == "خلاصه ترکیبی"
+
+    def test_re_summarize_llm_failure(self, summarizer: Summarizer) -> None:
+        """Test that LLM failure returns None."""
+        with patch.object(
+            summarizer._client.chat.completions,
+            "create",
+            side_effect=Exception("API Error"),
+        ):
+            result = summarizer.re_summarize(["summary 1", "summary 2"])
+
+        assert result is None
+
+    def test_re_summarize_prompt_contains_requirements(self) -> None:
+        """Test that the re-summarize prompt has critical requirements."""
+        assert "CRITICAL REQUIREMENTS" in RE_SUMMARIZE_PROMPT
+        assert "PRESERVE uncertainty language" in RE_SUMMARIZE_PROMPT
+        assert "{summaries}" in RE_SUMMARIZE_PROMPT
 
 
 class TestTemperatureSetting:

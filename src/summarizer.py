@@ -48,6 +48,20 @@ News items:
 Summary:"""
 
 
+RE_SUMMARIZE_PROMPT = """You have several previously-generated Persian news summaries below. Combine them into one concise, coherent Persian summary.
+
+CRITICAL REQUIREMENTS:
+1. Remove duplicate or overlapping news items
+2. PRESERVE uncertainty language exactly - if the source says "ممکن است", "شاید", "احتمالاً", "طبق گزارش‌ها", keep those words
+3. MAINTAIN original verb tenses - do not change conditional/future to past tense
+4. Do NOT add any information not present in the original summaries
+
+Summaries to combine:
+{summaries}
+
+Write a single combined summary in Persian:"""
+
+
 TRANSLATION_PROMPT = """Translate the following English news summary to Persian.
 
 CRITICAL: Preserve all uncertainty language exactly:
@@ -171,6 +185,21 @@ class Summarizer:
         return self._call_llm(
             model=self.config.llm_model,
             system_prompt="You are a professional English to Persian translator.",
+            user_prompt=prompt,
+        )
+
+    def re_summarize(self, texts: list[str]) -> str | None:
+        """Re-summarize multiple previously-generated summaries into one.
+
+        Used by the Bale retry queue to condense queued summaries into a
+        single catch-up message.
+        """
+        joined = "\n\n---\n\n".join(texts)
+        prompt = RE_SUMMARIZE_PROMPT.format(summaries=joined)
+
+        return self._call_llm(
+            model=self.config.llm_model,
+            system_prompt="You are a helpful Persian news summarizer.",
             user_prompt=prompt,
         )
 

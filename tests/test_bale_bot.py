@@ -1,15 +1,17 @@
 """Tests for the Bale bot module."""
 
+import json
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from src.bale_bot import BALE_API_BASE, BaleBot
+from src.bale_bot import BALE_API_BASE, BALE_QUEUE_MAX_AGE_HOURS, BaleBot
 from src.config import Config
 from src.models import Summary
+from src.summarizer import Summarizer
 
 
 @pytest.fixture
@@ -23,9 +25,17 @@ def bale_config(sample_config: Config) -> Config:
 
 
 @pytest.fixture
-def bot(bale_config: Config) -> BaleBot:
+def mock_summarizer(bale_config: Config) -> MagicMock:
+    """Create a mock Summarizer."""
+    summarizer = MagicMock(spec=Summarizer)
+    summarizer.re_summarize = MagicMock(return_value="re-summarized text")
+    return summarizer
+
+
+@pytest.fixture
+def bot(bale_config: Config, mock_summarizer: MagicMock) -> BaleBot:
     """Create a BaleBot instance for testing."""
-    return BaleBot(bale_config)
+    return BaleBot(bale_config, mock_summarizer)
 
 
 class TestBaleBot:
@@ -153,3 +163,339 @@ class TestBaleBot:
             assert mock_post.call_count > 1
 
         await bot.stop()
+
+
+class TestBaleBotRetryQueue:
+    """Tests for the BaleBot retry queue."""
+
+    async def test_enqueue_on_post_summary_failure(
+        self, bot: BaleBot, sample_summary: Summary, tmp_path: MagicMock
+    ) -> None:
+        """Test that failed post_summary enqueues the message."""
+        queue_file = tmp_path / "bale_retry_queue"
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            with patch.object(
+                bot._client,
+                "post",
+                new_callable=AsyncMock,
+                side_effect=Exception("Network error"),
+            ):
+                await bot.post_summary(sample_summary)
+
+            assert len(bot._queue) == 1
+            assert queue_file.exists()
+            await bot.stop()
+
+    async def test_enqueue_on_post_alert_failure(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that failed post_alert enqueues the message."""
+        queue_file = tmp_path / "bale_retry_queue"
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            with patch.object(
+                bot._client,
+                "post",
+                new_callable=AsyncMock,
+                side_effect=Exception("Network error"),
+            ):
+                await bot.post_alert("Test alert")
+
+            assert len(bot._queue) == 1
+            assert bot._queue[0]["text"] == "Test alert"
+            await bot.stop()
+
+    async def test_no_enqueue_on_success(
+        self, bot: BaleBot, sample_summary: Summary, tmp_path: MagicMock
+    ) -> None:
+        """Test that successful post does not enqueue."""
+        queue_file = tmp_path / "bale_retry_queue"
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            with patch.object(
+                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            ):
+                await bot.post_summary(sample_summary)
+
+            assert len(bot._queue) == 0
+            await bot.stop()
+
+    async def test_load_queue_on_start(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that queue is loaded from disk on start."""
+        queue_file = tmp_path / "bale_retry_queue"
+        queue_data = {
+            "items": [
+                {"text": "queued message", "queued_at": datetime.now().isoformat()}
+            ]
+        }
+        queue_file.write_text(json.dumps(queue_data))
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            assert len(bot._queue) == 1
+            assert bot._queue[0]["text"] == "queued message"
+            await bot.stop()
+
+    async def test_load_queue_missing_file(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that missing queue file is handled gracefully."""
+        queue_file = tmp_path / "nonexistent_queue"
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            assert len(bot._queue) == 0
+            await bot.stop()
+
+    async def test_load_queue_corrupted_file(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that corrupted queue file is handled gracefully."""
+        queue_file = tmp_path / "bale_retry_queue"
+        queue_file.write_text("not valid json{{{")
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            assert len(bot._queue) == 0
+            await bot.stop()
+
+    def test_prune_expired_items(self, bot: BaleBot) -> None:
+        """Test that items older than max age are pruned."""
+        old_time = (
+            datetime.now() - timedelta(hours=BALE_QUEUE_MAX_AGE_HOURS + 1)
+        ).isoformat()
+        bot._queue = [
+            {"text": "old message", "queued_at": old_time},
+            {"text": "recent message", "queued_at": datetime.now().isoformat()},
+        ]
+
+        removed = bot._prune_expired()
+
+        assert removed == 1
+        assert len(bot._queue) == 1
+        assert bot._queue[0]["text"] == "recent message"
+
+    def test_prune_keeps_recent_items(self, bot: BaleBot) -> None:
+        """Test that recent items are not pruned."""
+        recent_time = datetime.now().isoformat()
+        bot._queue = [
+            {"text": "msg1", "queued_at": recent_time},
+            {"text": "msg2", "queued_at": recent_time},
+        ]
+
+        removed = bot._prune_expired()
+
+        assert removed == 0
+        assert len(bot._queue) == 2
+
+    async def test_flush_queue_success(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that successful flush clears the queue."""
+        queue_file = tmp_path / "bale_retry_queue"
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            bot._queue = [
+                {"text": "queued msg", "queued_at": datetime.now().isoformat()}
+            ]
+
+            with patch.object(
+                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            ):
+                result = await bot._flush_queue()
+
+            assert result is True
+            assert len(bot._queue) == 0
+            await bot.stop()
+
+    async def test_flush_queue_failure_keeps_items(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that failed flush keeps items in queue."""
+        queue_file = tmp_path / "bale_retry_queue"
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            bot._queue = [
+                {"text": "queued msg", "queued_at": datetime.now().isoformat()}
+            ]
+
+            with patch.object(
+                bot._client,
+                "post",
+                new_callable=AsyncMock,
+                side_effect=Exception("still down"),
+            ):
+                result = await bot._flush_queue()
+
+            assert result is False
+            assert len(bot._queue) == 1
+            await bot.stop()
+
+    async def test_flush_empty_queue(self, bot: BaleBot) -> None:
+        """Test that flushing an empty queue returns True without sending."""
+        await bot.start()
+        bot._queue = []
+
+        with patch.object(bot, "_send_message", new_callable=AsyncMock) as mock_send:
+            result = await bot._flush_queue()
+
+        assert result is True
+        mock_send.assert_not_called()
+        await bot.stop()
+
+    async def test_flush_re_summarizes_multiple(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that multiple queued items are re-summarized."""
+        queue_file = tmp_path / "bale_retry_queue"
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            now = datetime.now().isoformat()
+            bot._queue = [
+                {"text": "summary 1", "queued_at": now},
+                {"text": "summary 2", "queued_at": now},
+            ]
+
+            with patch.object(
+                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            ):
+                await bot._flush_queue()
+
+            bot._summarizer.re_summarize.assert_called_once_with(
+                ["summary 1", "summary 2"]
+            )
+            await bot.stop()
+
+    async def test_flush_single_item_no_re_summarize(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that a single queued item is sent as-is without LLM call."""
+        queue_file = tmp_path / "bale_retry_queue"
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            bot._queue = [
+                {"text": "only one", "queued_at": datetime.now().isoformat()}
+            ]
+
+            with patch.object(
+                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            ):
+                await bot._flush_queue()
+
+            bot._summarizer.re_summarize.assert_not_called()
+            await bot.stop()
+
+    async def test_flush_re_summarize_fallback(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that LLM failure falls back to most recent item."""
+        queue_file = tmp_path / "bale_retry_queue"
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        bot._summarizer.re_summarize = MagicMock(return_value=None)
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            now = datetime.now().isoformat()
+            bot._queue = [
+                {"text": "older", "queued_at": now},
+                {"text": "newest", "queued_at": now},
+            ]
+
+            with patch.object(
+                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            ) as mock_post:
+                await bot._flush_queue()
+
+            # Should have sent the most recent (last) item
+            sent_text = mock_post.call_args[1]["json"]["text"]
+            assert sent_text == "newest"
+            await bot.stop()
+
+    async def test_retry_loop_starts_and_stops(self, bot: BaleBot) -> None:
+        """Test that start creates retry task and stop cancels it."""
+        await bot.start()
+        assert bot._retry_task is not None
+        assert not bot._retry_task.done()
+
+        await bot.stop()
+        assert bot._retry_task.done()
+
+    async def test_save_queue_on_stop(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that queue is saved when bot stops."""
+        queue_file = tmp_path / "bale_retry_queue"
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            bot._queue = [
+                {"text": "persist me", "queued_at": datetime.now().isoformat()}
+            ]
+            await bot.stop()
+
+            saved = json.loads(queue_file.read_text())
+            assert len(saved["items"]) == 1
+            assert saved["items"][0]["text"] == "persist me"
+
+    async def test_persian_text_persistence(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that Persian content survives save/load cycle."""
+        queue_file = tmp_path / "bale_retry_queue"
+        persian_text = "این یک خلاصه خبری فارسی است"
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            bot._queue = [
+                {"text": persian_text, "queued_at": datetime.now().isoformat()}
+            ]
+            bot._save_queue()
+
+            bot._queue = []
+            bot._load_queue()
+
+            assert len(bot._queue) == 1
+            assert bot._queue[0]["text"] == persian_text
+
+    async def test_flush_concurrency_safety(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that items added during flush survive."""
+        queue_file = tmp_path / "bale_retry_queue"
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            now = datetime.now().isoformat()
+            bot._queue = [{"text": "original", "queued_at": now}]
+
+            original_send = AsyncMock(return_value=mock_response)
+
+            async def send_and_add(*args: object, **kwargs: object) -> MagicMock:
+                """Simulate a new item arriving during flush."""
+                bot._queue.append({"text": "added during flush", "queued_at": now})
+                return await original_send(*args, **kwargs)
+
+            with patch.object(
+                bot._client, "post", new_callable=lambda: send_and_add
+            ):
+                await bot._flush_queue()
+
+            # The item added during flush should survive
+            assert len(bot._queue) == 1
+            assert bot._queue[0]["text"] == "added during flush"
+            await bot.stop()
