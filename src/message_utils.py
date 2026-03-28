@@ -37,6 +37,11 @@ def format_html_links(text: str) -> str:
     return "".join(result)
 
 
+def _has_balanced_html_tags(text: str) -> bool:
+    """Check if <a> tags are balanced in the text."""
+    return text.count("<a ") == text.count("</a>")
+
+
 def split_message(text: str) -> list[str]:
     """Split a message into chunks that fit the message length limit."""
     if len(text) <= MAX_MESSAGE_LENGTH:
@@ -72,5 +77,10 @@ def split_message(text: str) -> list[str]:
 
     if current:
         messages.append(current.strip())
+
+    # Validate no broken HTML tags in any chunk
+    for i, msg in enumerate(messages):
+        if not _has_balanced_html_tags(msg):
+            messages[i] = re.sub(r"<[^>]+>", "", msg)
 
     return messages

@@ -67,6 +67,27 @@ class TestSplitMessage:
         assert MAX_MESSAGE_LENGTH == 4096
 
 
+class TestSplitMessageHtml:
+    """Tests for HTML-aware message splitting."""
+
+    def test_split_preserves_balanced_html(self) -> None:
+        """Test that balanced HTML tags are preserved after splitting."""
+        bullet = '🔹 خبر (<a href="https://example.com">منبع</a>)'
+        text = "\n\n".join([bullet] * 100)
+        messages = split_message(text)
+        for msg in messages:
+            assert msg.count("<a ") == msg.count("</a>")
+
+    def test_split_strips_unbalanced_html(self) -> None:
+        """Test that unbalanced HTML tags are stripped as fallback."""
+        # Craft a message where an <a> tag gets split mid-tag
+        # by making a single "paragraph" that's too long
+        long_text = "x" * 4000 + ' <a href="https://example.com">link text that pushes over</a> ' + "y" * 200
+        messages = split_message(long_text)
+        for msg in messages:
+            assert msg.count("<a ") == msg.count("</a>")
+
+
 class TestFormatHtmlLinks:
     """Tests for HTML link post-processing."""
 
