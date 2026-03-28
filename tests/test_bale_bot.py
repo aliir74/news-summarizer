@@ -115,6 +115,24 @@ class TestBaleBot:
 
         await bot.stop()
 
+    async def test_send_message_includes_html_parse_mode(
+        self, bot: BaleBot
+    ) -> None:
+        """Test that _send_message includes parse_mode HTML in the payload."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        await bot.start()
+        with patch.object(
+            bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+        ) as mock_post:
+            await bot._send_message("test message")
+
+            call_args = mock_post.call_args
+            assert call_args[1]["json"]["parse_mode"] == "HTML"
+
+        await bot.stop()
+
     async def test_post_alert_success(self, bot: BaleBot) -> None:
         """Test successful alert posting."""
         mock_response = MagicMock()
