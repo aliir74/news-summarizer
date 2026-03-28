@@ -3,6 +3,7 @@
 import logging
 
 from pyrogram import Client
+from pyrogram.enums import ParseMode
 
 from src.config import Config
 from src.message_utils import split_message
@@ -56,6 +57,7 @@ class TelegramBot:
                 await self.client.send_message(
                     chat_id=self.config.output_channel_id,
                     text=msg,
+                    parse_mode=ParseMode.HTML,
                 )
 
             logger.info(
@@ -77,6 +79,7 @@ class TelegramBot:
                 await self.client.send_message(
                     chat_id=self.config.output_channel_id,
                     text=msg,
+                    parse_mode=ParseMode.HTML,
                 )
 
             logger.info("Posted alert message")
