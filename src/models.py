@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 import jdatetime
 
+from src.message_utils import format_html_links
+
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 
@@ -108,7 +110,7 @@ class Summary:
         channel_count = self._to_persian_digits(len(self.channels))
         footer = f"\n\n📡 {source_count} خبر از {channel_count} منبع"
 
-        return header + self.content + footer
+        return header + format_html_links(self.content) + footer
 
 
 # Cloudflare Radar monitoring models
