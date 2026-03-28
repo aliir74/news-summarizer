@@ -485,6 +485,49 @@ class TestReSummarize:
         assert "{summaries}" in RE_SUMMARIZE_PROMPT
 
 
+class TestBulletPointPrompt:
+    """Tests for bullet-point output format in prompts."""
+
+    def test_prompt_instructs_bullet_format(self) -> None:
+        """Test that the prompt asks for bullet-point output."""
+        assert "🔹" in SUMMARIZATION_PROMPT
+
+    def test_prompt_instructs_source_label(self) -> None:
+        """Test that the prompt asks for source labels per bullet."""
+        assert "SOURCE_LABEL" in SUMMARIZATION_PROMPT
+
+    def test_format_messages_includes_urls(self, summarizer: Summarizer) -> None:
+        """Test that _format_messages includes message URLs."""
+        messages = [
+            Message(
+                id=1,
+                channel_username="test_channel",
+                channel_title="Test Channel",
+                text="Test message",
+                timestamp=datetime(2024, 1, 15, 10, 30),
+                url="https://t.me/test_channel/1",
+            )
+        ]
+        formatted = summarizer._format_messages(messages)
+        assert "https://t.me/test_channel/1" in formatted
+
+    def test_format_messages_includes_rss_url(self, summarizer: Summarizer) -> None:
+        """Test that _format_messages includes RSS article URLs."""
+        messages = [
+            Message(
+                id=1,
+                channel_username="Al Jazeera",
+                channel_title="Al Jazeera",
+                text="Article text",
+                timestamp=datetime(2024, 1, 15, 10, 30),
+                url="https://aljazeera.com/news/article-123",
+                source_type=SourceType.RSS,
+            )
+        ]
+        formatted = summarizer._format_messages(messages)
+        assert "https://aljazeera.com/news/article-123" in formatted
+
+
 class TestTemperatureSetting:
     """Tests for temperature setting in LLM calls."""
 
