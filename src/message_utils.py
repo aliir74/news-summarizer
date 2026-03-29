@@ -1,7 +1,13 @@
 """Shared message utilities for output writers."""
 
 import html
+import logging
 import re
+
+logger = logging.getLogger(__name__)
+
+# Type alias for source reference mapping: {ref_num: (label, url)}
+SourceRefMap = dict[int, tuple[str, str]]
 
 # Telegram/Bale message character limit
 MAX_MESSAGE_LENGTH = 4096
@@ -10,6 +16,70 @@ MAX_MESSAGE_LENGTH = 4096
 SOURCE_LINK_PATTERN = re.compile(
     r"\(([^|()]+?)\s*\|\s*(https?://[^\s)]+)\)"
 )
+
+# Pattern: line-starting bullet markers (markdown, numbered, dashed)
+BULLET_PATTERN = re.compile(
+    r"^(?:"
+    r"\*\s+"  # * item  or  *   item
+    r"|-\s+"  # - item
+    r"|[0-9۰-۹]+[.\-\)]\s*"  # 1. or 1- or 1) or ۱. etc.
+    r")",
+    re.MULTILINE,
+)
+
+# Pattern: [1] or [1,3] or [1, 3] or [۱،۳] (Persian digits + comma)
+SOURCE_REF_PATTERN = re.compile(
+    r"\[([0-9۰-۹]+(?:\s*[,،]\s*[0-9۰-۹]+)*)\]"
+)
+
+# Persian digit to ASCII mapping
+_PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+
+
+def normalize_bullets(text: str) -> str:
+    """Normalize markdown/numbered bullet prefixes to 🔹."""
+    return BULLET_PATTERN.sub("🔹 ", text)
+
+
+def resolve_source_refs(text: str, source_refs: SourceRefMap) -> str:
+    """Replace [n] reference markers with (label | url) format.
+
+    Supports Persian digits and Persian comma separator.
+    Unknown reference numbers are left unchanged.
+    """
+
+    def _replacer(match: re.Match[str]) -> str:
+        refs_str = match.group(1)
+        nums = [
+            int(n.strip().translate(_PERSIAN_DIGITS))
+            for n in re.split(r"[,،]", refs_str)
+        ]
+        parts: list[str] = []
+        seen: set[int] = set()
+        for num in nums:
+            if num in seen:
+                continue
+            seen.add(num)
+            if num not in source_refs:
+                logger.warning("Unknown source reference [%d] in LLM output", num)
+                continue
+            label, url = source_refs[num]
+            if url:
+                parts.append(f"({label} | {url})")
+            else:
+                parts.append(f"({label})")
+        if parts:
+            return " ".join(parts)
+        return match.group(0)  # Leave unresolved refs as-is
+
+    return SOURCE_REF_PATTERN.sub(_replacer, text)
+
+
+def postprocess_llm_output(text: str, source_refs: SourceRefMap) -> str:
+    """Normalize bullets and resolve source references in LLM output."""
+    text = normalize_bullets(text)
+    text = resolve_source_refs(text, source_refs)
+    return text
 
 
 def format_html_links(text: str) -> str:
