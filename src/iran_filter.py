@@ -4,7 +4,7 @@ import re
 from re import Pattern
 
 from src.config import IranFilter
-from src.models import Message
+from src.models import Message, SourceType
 
 
 class IranRelevanceFilter:
@@ -33,8 +33,25 @@ class IranRelevanceFilter:
 
         return bool(self._pattern.search(text))
 
+    def _keyword_count(self, text: str) -> int:
+        """Count the number of keyword matches in text."""
+        if not self._pattern:
+            return 0
+        return len(self._pattern.findall(text))
+
     def filter_message(self, message: Message) -> bool:
-        """Check if a message is Iran-related."""
+        """Check if a message is Iran-related.
+
+        For RSS messages, requires the keyword in the title OR at least 2
+        keyword matches in the full text. This filters out articles where
+        Iran is only mentioned tangentially (e.g. a UK politics article
+        that mentions "Iran war" once in passing).
+        """
+        if message.source_type == SourceType.RSS:
+            title = message.text.split("\n\n")[0]
+            if self.is_iran_related(title):
+                return True
+            return self._keyword_count(message.text) >= 2
         return self.is_iran_related(message.text)
 
     def filter_messages(self, messages: list[Message]) -> list[Message]:

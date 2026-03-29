@@ -143,6 +143,12 @@ class TestFormatHtmlLinks:
         # But the link itself should still work
         assert '<a href="https://example.com">منبع</a>' in result
 
+    def test_format_source_link_label_with_parens(self) -> None:
+        """Test that labels containing nested parentheses are linked correctly."""
+        text = "🔹 بازارها افت کردند (Reuters Middle East (via Google News) | https://news.google.com/rss/articles/abc123?oc=5)"
+        result = format_html_links(text)
+        assert '<a href="https://news.google.com/rss/articles/abc123?oc=5">Reuters Middle East (via Google News)</a>' in result
+
 
 class TestNormalizeBullets:
     """Tests for bullet format normalization."""

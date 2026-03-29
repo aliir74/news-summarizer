@@ -4,7 +4,7 @@ from datetime import datetime
 
 from src.config import IranFilter
 from src.iran_filter import IranRelevanceFilter
-from src.models import Message
+from src.models import Message, SourceType
 
 
 class TestIranRelevanceFilter:
@@ -124,3 +124,62 @@ class TestIranRelevanceFilter:
 
         # Word boundaries work correctly
         assert filter_obj.is_iran_related("Iran's policy")
+
+    def test_filter_message_rss_tangential_mention(self, sample_iran_filter: IranFilter) -> None:
+        """Test that RSS articles with one tangential Iran mention are excluded."""
+        filter_obj = IranRelevanceFilter(sample_iran_filter)
+
+        # Iran once in description only — tangential, should be excluded
+        tangential = Message(
+            id=1,
+            channel_username="test",
+            channel_title="Test",
+            text="UK Labour launches local election campaign\n\nPM will cite Iran war as reason to vote Labour",
+            timestamp=datetime.now(),
+            source_type=SourceType.RSS,
+        )
+        assert filter_obj.filter_message(tangential) is False
+
+    def test_filter_message_rss_keyword_in_title(self, sample_iran_filter: IranFilter) -> None:
+        """Test that RSS articles with Iran in title are included."""
+        filter_obj = IranRelevanceFilter(sample_iran_filter)
+
+        primary = Message(
+            id=2,
+            channel_username="test",
+            channel_title="Test",
+            text="Iran nuclear talks resume in Vienna\n\nDelegates met for hours with no agreement reached",
+            timestamp=datetime.now(),
+            source_type=SourceType.RSS,
+        )
+        assert filter_obj.filter_message(primary) is True
+
+    def test_filter_message_rss_multiple_body_mentions(self, sample_iran_filter: IranFilter) -> None:
+        """Test that RSS articles with 2+ keyword matches in body are included."""
+        filter_obj = IranRelevanceFilter(sample_iran_filter)
+
+        # No keyword in title, but 2 mentions in body — substantive, should be included
+        substantive = Message(
+            id=3,
+            channel_username="test",
+            channel_title="Test",
+            text="Gulf markets drop amid regional fears\n\nIran conflict escalation worries investors. Iranian officials have not commented.",
+            timestamp=datetime.now(),
+            source_type=SourceType.RSS,
+        )
+        assert filter_obj.filter_message(substantive) is True
+
+    def test_filter_message_telegram_checks_full_text(self, sample_iran_filter: IranFilter) -> None:
+        """Test that Telegram messages still check the full text."""
+        filter_obj = IranRelevanceFilter(sample_iran_filter)
+
+        # Iran in second paragraph of a Telegram message — should be included
+        tg_message = Message(
+            id=1,
+            channel_username="test",
+            channel_title="Test",
+            text="Breaking news from the region\n\nIran confirms military exercise",
+            timestamp=datetime.now(),
+            source_type=SourceType.TELEGRAM,
+        )
+        assert filter_obj.filter_message(tg_message) is True

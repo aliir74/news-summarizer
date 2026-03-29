@@ -13,8 +13,10 @@ SourceRefMap = dict[int, tuple[str, str]]
 MAX_MESSAGE_LENGTH = 4096
 
 # Pattern: (source label | URL) at end of bullet
+# Label allows one level of nested parens e.g. "Reuters (via Google News)"
+# but excludes | and newlines to prevent cross-bullet matching.
 SOURCE_LINK_PATTERN = re.compile(
-    r"\(([^|()]+?)\s*\|\s*(https?://[^\s)]+)\)"
+    r"\(((?:[^|()\n]|\([^)]*\))+?)\s*\|\s*(https?://[^\s)]+)\)"
 )
 
 # Pattern: line-starting bullet markers (markdown, numbered, dashed)
