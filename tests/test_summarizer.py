@@ -82,7 +82,7 @@ class TestSummarizer:
         self, summarizer: Summarizer, sample_messages: list[Message]
     ) -> None:
         """Test message formatting for LLM prompt."""
-        formatted = summarizer._format_messages(sample_messages)
+        formatted, source_refs = summarizer._format_messages(sample_messages)
 
         assert "Channel One" in formatted
         assert "Channel Two" in formatted
@@ -90,6 +90,14 @@ class TestSummarizer:
         assert "خبر دوم برای تست" in formatted
         assert "خبر از کانال دوم" in formatted
         assert "---" in formatted  # Separator between messages
+        # Check numbered references
+        assert "[1]" in formatted
+        assert "[2]" in formatted
+        assert "[3]" in formatted
+        # Check source_refs map
+        assert len(source_refs) == 3
+        assert source_refs[1][0] == "Channel One"
+        assert source_refs[3][0] == "Channel Two"
 
     def test_summarizer_uses_correct_model(self, sample_config: Config) -> None:
         """Test that summarizer uses the configured model."""
@@ -417,7 +425,7 @@ class TestTimestampFormat:
             )
         ]
 
-        formatted = summarizer._format_messages(messages)
+        formatted, _ = summarizer._format_messages(messages)
 
         # Should include YYYY-MM-DD format
         assert "2024-01-15" in formatted
@@ -444,7 +452,7 @@ class TestTimestampFormat:
             ),
         ]
 
-        formatted = summarizer._format_messages(messages)
+        formatted, _ = summarizer._format_messages(messages)
 
         # Both dates should be present and distinguishable
         assert "2024-01-10" in formatted
@@ -492,12 +500,13 @@ class TestBulletPointPrompt:
         """Test that the prompt asks for bullet-point output."""
         assert "🔹" in SUMMARIZATION_PROMPT
 
-    def test_prompt_instructs_source_label(self) -> None:
-        """Test that the prompt asks for source labels per bullet."""
-        assert "SOURCE_LABEL" in SUMMARIZATION_PROMPT
+    def test_prompt_instructs_source_refs(self) -> None:
+        """Test that the prompt asks for numbered source references."""
+        assert "reference number" in SUMMARIZATION_PROMPT
+        assert "[1]" in SUMMARIZATION_PROMPT
 
-    def test_format_messages_includes_urls(self, summarizer: Summarizer) -> None:
-        """Test that _format_messages includes message URLs."""
+    def test_format_messages_stores_urls_in_refs(self, summarizer: Summarizer) -> None:
+        """Test that _format_messages stores URLs in source_refs map."""
         messages = [
             Message(
                 id=1,
@@ -508,11 +517,13 @@ class TestBulletPointPrompt:
                 url="https://t.me/test_channel/1",
             )
         ]
-        formatted = summarizer._format_messages(messages)
-        assert "https://t.me/test_channel/1" in formatted
+        _, source_refs = summarizer._format_messages(messages)
+        assert source_refs[1] == ("Test Channel", "https://t.me/test_channel/1")
 
-    def test_format_messages_includes_rss_url(self, summarizer: Summarizer) -> None:
-        """Test that _format_messages includes RSS article URLs."""
+    def test_format_messages_stores_rss_url_in_refs(
+        self, summarizer: Summarizer
+    ) -> None:
+        """Test that _format_messages stores RSS article URLs in source_refs."""
         messages = [
             Message(
                 id=1,
@@ -524,8 +535,8 @@ class TestBulletPointPrompt:
                 source_type=SourceType.RSS,
             )
         ]
-        formatted = summarizer._format_messages(messages)
-        assert "https://aljazeera.com/news/article-123" in formatted
+        _, source_refs = summarizer._format_messages(messages)
+        assert source_refs[1] == ("Al Jazeera", "https://aljazeera.com/news/article-123")
 
 
 class TestTemperatureSetting:

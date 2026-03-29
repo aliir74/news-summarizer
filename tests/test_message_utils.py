@@ -1,6 +1,13 @@
 """Tests for shared message utilities."""
 
-from src.message_utils import MAX_MESSAGE_LENGTH, format_html_links, split_message
+from src.message_utils import (
+    MAX_MESSAGE_LENGTH,
+    format_html_links,
+    normalize_bullets,
+    postprocess_llm_output,
+    resolve_source_refs,
+    split_message,
+)
 
 
 class TestSplitMessage:
@@ -135,3 +142,153 @@ class TestFormatHtmlLinks:
         assert "&lt;script&gt;" in result
         # But the link itself should still work
         assert '<a href="https://example.com">منبع</a>' in result
+
+
+class TestNormalizeBullets:
+    """Tests for bullet format normalization."""
+
+    def test_asterisk_bullet(self) -> None:
+        """Test that * bullet is normalized to 🔹."""
+        assert normalize_bullets("* item") == "🔹 item"
+
+    def test_asterisk_with_extra_spaces(self) -> None:
+        """Test that *   bullet is normalized to 🔹."""
+        assert normalize_bullets("*   item") == "🔹 item"
+
+    def test_dash_bullet(self) -> None:
+        """Test that - bullet is normalized to 🔹."""
+        assert normalize_bullets("- item") == "🔹 item"
+
+    def test_numbered_bullet_dot(self) -> None:
+        """Test that 1. bullet is normalized to 🔹."""
+        assert normalize_bullets("1. item") == "🔹 item"
+
+    def test_numbered_bullet_dash(self) -> None:
+        """Test that 1- bullet is normalized to 🔹."""
+        assert normalize_bullets("1- item") == "🔹 item"
+
+    def test_numbered_bullet_paren(self) -> None:
+        """Test that 1) bullet is normalized to 🔹."""
+        assert normalize_bullets("1) item") == "🔹 item"
+
+    def test_persian_numbered_bullet(self) -> None:
+        """Test that ۱. bullet is normalized to 🔹."""
+        assert normalize_bullets("۱. item") == "🔹 item"
+
+    def test_existing_emoji_bullet_unchanged(self) -> None:
+        """Test that 🔹 bullet is not double-prefixed."""
+        assert normalize_bullets("🔹 item") == "🔹 item"
+
+    def test_multiline_mixed_formats(self) -> None:
+        """Test normalization of mixed bullet formats across lines."""
+        text = "* first\n- second\n1. third\n🔹 fourth"
+        result = normalize_bullets(text)
+        assert result == "🔹 first\n🔹 second\n🔹 third\n🔹 fourth"
+
+    def test_mid_line_asterisk_not_touched(self) -> None:
+        """Test that asterisks inside text are not affected."""
+        text = "this is *bold* text"
+        assert normalize_bullets(text) == "this is *bold* text"
+
+    def test_mid_line_dash_not_touched(self) -> None:
+        """Test that dashes inside text are not affected."""
+        text = "some - text here"
+        assert normalize_bullets(text) == "some - text here"
+
+
+class TestResolveSourceRefs:
+    """Tests for source reference resolution."""
+
+    def test_single_ref(self) -> None:
+        """Test resolving a single [1] reference."""
+        refs = {1: ("BBC Persian", "https://bbc.com/article")}
+        result = resolve_source_refs("news [1]", refs)
+        assert result == "news (BBC Persian | https://bbc.com/article)"
+
+    def test_multi_ref(self) -> None:
+        """Test resolving [1,3] multiple references."""
+        refs = {
+            1: ("BBC", "https://bbc.com/1"),
+            2: ("CNN", "https://cnn.com/2"),
+            3: ("AJ", "https://aj.com/3"),
+        }
+        result = resolve_source_refs("combined news [1,3]", refs)
+        assert "(BBC | https://bbc.com/1)" in result
+        assert "(AJ | https://aj.com/3)" in result
+        assert "CNN" not in result
+
+    def test_persian_digits(self) -> None:
+        """Test resolving [۱] with Persian digits."""
+        refs = {1: ("الجزیره", "https://aj.com/article")}
+        result = resolve_source_refs("خبر [۱]", refs)
+        assert result == "خبر (الجزیره | https://aj.com/article)"
+
+    def test_persian_comma_separator(self) -> None:
+        """Test resolving [۱،۳] with Persian comma."""
+        refs = {
+            1: ("BBC", "https://bbc.com/1"),
+            3: ("AJ", "https://aj.com/3"),
+        }
+        result = resolve_source_refs("خبر [۱،۳]", refs)
+        assert "(BBC | https://bbc.com/1)" in result
+        assert "(AJ | https://aj.com/3)" in result
+
+    def test_unknown_ref_preserved(self) -> None:
+        """Test that unknown ref numbers keep original text."""
+        refs = {1: ("BBC", "https://bbc.com/1")}
+        result = resolve_source_refs("news [99]", refs)
+        assert result == "news [99]"
+
+    def test_ref_with_no_url(self) -> None:
+        """Test that empty URL produces label without pipe."""
+        refs = {1: ("Source", "")}
+        result = resolve_source_refs("news [1]", refs)
+        assert result == "news (Source)"
+
+    def test_duplicate_ref_numbers_deduped(self) -> None:
+        """Test that duplicate numbers in [1,1] are deduped."""
+        refs = {1: ("BBC", "https://bbc.com/1")}
+        result = resolve_source_refs("news [1,1]", refs)
+        assert result == "news (BBC | https://bbc.com/1)"
+
+    def test_multiple_refs_in_text(self) -> None:
+        """Test resolving multiple separate [n] patterns in one text."""
+        refs = {
+            1: ("BBC", "https://bbc.com/1"),
+            2: ("AJ", "https://aj.com/2"),
+        }
+        text = "🔹 first news [1]\n🔹 second news [2]"
+        result = resolve_source_refs(text, refs)
+        assert "(BBC | https://bbc.com/1)" in result
+        assert "(AJ | https://aj.com/2)" in result
+
+
+class TestPostprocessLlmOutput:
+    """Tests for the combined postprocess_llm_output function."""
+
+    def test_combined_normalization_and_refs(self) -> None:
+        """Test full pipeline: normalize bullets + resolve refs."""
+        refs = {
+            1: ("BBC", "https://bbc.com/1"),
+            2: ("AJ", "https://aj.com/2"),
+        }
+        text = "* first news [1]\n- second news [2]"
+        result = postprocess_llm_output(text, refs)
+        assert result.startswith("🔹 first news")
+        assert "(BBC | https://bbc.com/1)" in result
+        assert "(AJ | https://aj.com/2)" in result
+        assert "*" not in result
+        assert "- " not in result
+
+    def test_empty_source_refs(self) -> None:
+        """Test with empty refs dict - refs pass through unchanged."""
+        text = "🔹 news [1]"
+        result = postprocess_llm_output(text, {})
+        assert result == "🔹 news [1]"
+
+    def test_no_refs_in_text(self) -> None:
+        """Test plain text with no [n] patterns passes through."""
+        refs = {1: ("BBC", "https://bbc.com/1")}
+        text = "🔹 just a plain bullet"
+        result = postprocess_llm_output(text, refs)
+        assert result == "🔹 just a plain bullet"

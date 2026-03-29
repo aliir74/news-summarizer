@@ -6,6 +6,7 @@ import re
 from openai import OpenAI
 
 from src.config import Config
+from src.message_utils import SourceRefMap, postprocess_llm_output
 from src.models import Message, SourceInfo, SourceType, Summary, extract_domain
 
 logger = logging.getLogger(__name__)
@@ -25,13 +26,14 @@ OUTPUT FORMAT:
 - Output ONLY bullet points, one per news item or topic
 - Start each bullet with 🔹
 - Each bullet: 1-2 sentences, concise and direct
-- End each bullet with the source name in parentheses, e.g. (الجزیره) or (نیویورک تایمز) or (گاردین)
-- If a news item has a URL, include it as: (SOURCE_LABEL | URL)
+- End each bullet with the source reference number(s) in square brackets, e.g. [1] or [1,3] for combined items
+- Use the reference numbers from the input headers (e.g. [1], [2]) to attribute your bullets
+- Do NOT include URLs in your output - they will be added automatically
 - Rank bullets by importance - most important news first
 - Do NOT use paragraph style, sub-headers, or grouping headers
 - Do NOT add context, background, or information from your training data
 
-News items (with timestamps and URLs):
+News items (with timestamps):
 {messages}
 
 Write bullet-point summary in Persian:"""
@@ -49,8 +51,9 @@ OUTPUT FORMAT:
 - Output ONLY bullet points, one per news item or topic
 - Start each bullet with 🔹
 - Each bullet: 1-2 sentences maximum
-- End each bullet with the source name in parentheses, e.g. (Al Jazeera) or (NYT)
-- If a news item has a URL, include it as: (SOURCE_LABEL | URL)
+- End each bullet with the source reference number(s) in square brackets, e.g. [1] or [1,3]
+- Use the reference numbers from the input headers to attribute your bullets
+- Do NOT include URLs in your output - they will be added automatically
 - Rank by importance - most important first
 
 News items:
@@ -90,7 +93,7 @@ CRITICAL: Preserve all uncertainty language exactly:
 - "according to" → "به گفته"
 
 Do NOT change verb tenses or add/remove information.
-Keep the 🔹 bullet format and source labels exactly as they are.
+Keep the 🔹 bullet format and source reference numbers [1], [2] etc. exactly as they are.
 
 English bullet points:
 {summary}
@@ -124,7 +127,7 @@ class Summarizer:
 
     def _single_stage_summarize(self, messages: list[Message]) -> Summary | None:
         """Generate a summary using single-stage Persian summarization."""
-        formatted_messages = self._format_messages(messages)
+        formatted_messages, source_refs = self._format_messages(messages)
         prompt = SUMMARIZATION_PROMPT.format(messages=formatted_messages)
 
         content = self._call_llm(
@@ -136,6 +139,7 @@ class Summarizer:
         if not content:
             return None
 
+        content = postprocess_llm_output(content, source_refs)
         return self._build_summary(content, messages)
 
     def _two_stage_summarize(self, messages: list[Message]) -> Summary | None:
@@ -146,27 +150,36 @@ class Summarizer:
         3. Summarize Persian messages directly in Persian
         4. Combine both summaries
         """
-        # Separate messages by language
-        english_messages = [m for m in messages if not self._is_persian(m.text)]
-        persian_messages = [m for m in messages if self._is_persian(m.text)]
+        # Build global numbering across all messages
+        numbered = list(enumerate(messages, start=1))
+        source_refs: SourceRefMap = {
+            i: (msg.channel_title, msg.url) for i, msg in numbered
+        }
+
+        # Separate messages by language, preserving global numbering
+        english_numbered = [(i, m) for i, m in numbered if not self._is_persian(m.text)]
+        persian_numbered = [(i, m) for i, m in numbered if self._is_persian(m.text)]
 
         logger.info(
-            f"Two-stage: {len(english_messages)} English, {len(persian_messages)} Persian messages"
+            f"Two-stage: {len(english_numbered)} English, {len(persian_numbered)} Persian messages"
         )
 
         summaries: list[str] = []
 
         # Process English messages
-        if english_messages:
-            english_summary = self._summarize_english_messages(english_messages)
+        if english_numbered:
+            formatted, _ = self._format_messages_numbered(english_numbered)
+            english_summary = self._summarize_english_messages(formatted)
             if english_summary:
                 persian_translation = self._translate_to_persian(english_summary)
                 if persian_translation:
-                    summaries.append(persian_translation)
+                    summaries.append(
+                        postprocess_llm_output(persian_translation, source_refs)
+                    )
 
         # Process Persian messages
-        if persian_messages:
-            formatted = self._format_messages(persian_messages)
+        if persian_numbered:
+            formatted, _ = self._format_messages_numbered(persian_numbered)
             prompt = SUMMARIZATION_PROMPT.format(messages=formatted)
             persian_summary = self._call_llm(
                 model=self.config.llm_model,
@@ -174,7 +187,9 @@ class Summarizer:
                 user_prompt=prompt,
             )
             if persian_summary:
-                summaries.append(persian_summary)
+                summaries.append(
+                    postprocess_llm_output(persian_summary, source_refs)
+                )
 
         if not summaries:
             logger.error("No summaries generated from either language")
@@ -185,9 +200,8 @@ class Summarizer:
 
         return self._build_summary(combined_content, messages)
 
-    def _summarize_english_messages(self, messages: list[Message]) -> str | None:
-        """Summarize English messages in English."""
-        formatted = self._format_messages(messages)
+    def _summarize_english_messages(self, formatted: str) -> str | None:
+        """Summarize English messages in English from pre-formatted input."""
         prompt = ENGLISH_SUMMARY_PROMPT.format(messages=formatted)
 
         return self._call_llm(
@@ -294,13 +308,22 @@ class Summarizer:
 
         return persian_chars / total_alpha > 0.2
 
-    def _format_messages(self, messages: list[Message]) -> str:
-        """Format messages for the LLM prompt."""
-        formatted = []
-        for msg in messages:
+    def _format_messages(self, messages: list[Message]) -> tuple[str, SourceRefMap]:
+        """Format messages for the LLM prompt with sequential numbering."""
+        numbered = list(enumerate(messages, start=1))
+        return self._format_messages_numbered(numbered)
+
+    @staticmethod
+    def _format_messages_numbered(
+        numbered_msgs: list[tuple[int, Message]],
+    ) -> tuple[str, SourceRefMap]:
+        """Format messages with pre-assigned reference numbers."""
+        formatted: list[str] = []
+        source_refs: SourceRefMap = {}
+        for num, msg in numbered_msgs:
+            source_refs[num] = (msg.channel_title, msg.url)
             timestamp_str = msg.timestamp.strftime("%Y-%m-%d %H:%M")
-            url_line = f"\nURL: {msg.url}" if msg.url else ""
             formatted.append(
-                f"[{msg.channel_title} - {timestamp_str}]{url_line}\n{msg.text}\n"
+                f"[{num}] [{msg.channel_title} - {timestamp_str}]\n{msg.text}\n"
             )
-        return "\n---\n".join(formatted)
+        return "\n---\n".join(formatted), source_refs
