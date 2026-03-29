@@ -160,6 +160,37 @@ class TestSummaryFormatMessage:
         footer_pos = formatted.index(expected_footer)
         assert footer_pos > content_pos
 
+    def test_plain_format_keeps_raw_links(self) -> None:
+        """Test that html=False keeps raw (label | url) text without HTML tags."""
+        content = "🔹 خبر مهم (خبرگزاری | https://example.com/news)"
+        summary = Summary(
+            content=content,
+            source_count=1,
+            channels=["Ch A"],
+            created_at=datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ),
+        )
+
+        formatted = summary.format_message(html=False)
+
+        assert "(خبرگزاری | https://example.com/news)" in formatted
+        assert "<a " not in formatted
+        assert "</a>" not in formatted
+
+    def test_html_format_converts_links(self) -> None:
+        """Test that html=True (default) converts links to HTML tags."""
+        content = "🔹 خبر مهم (خبرگزاری | https://example.com/news)"
+        summary = Summary(
+            content=content,
+            source_count=1,
+            channels=["Ch A"],
+            created_at=datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ),
+        )
+
+        formatted = summary.format_message()
+
+        assert '<a href="https://example.com/news">' in formatted
+        assert "(خبرگزاری | https://example.com/news)" not in formatted
+
     def test_no_source_list(self) -> None:
         """Test that the old source list (منابع:) no longer appears."""
         summary = Summary(
