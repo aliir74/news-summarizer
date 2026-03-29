@@ -115,10 +115,10 @@ class TestBaleBot:
 
         await bot.stop()
 
-    async def test_send_message_includes_html_parse_mode(
+    async def test_send_message_no_parse_mode(
         self, bot: BaleBot
     ) -> None:
-        """Test that _send_message includes parse_mode HTML in the payload."""
+        """Test that _send_message does not include parse_mode (Bale ignores it)."""
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
 
@@ -129,7 +129,7 @@ class TestBaleBot:
             await bot._send_message("test message")
 
             call_args = mock_post.call_args
-            assert call_args[1]["json"]["parse_mode"] == "HTML"
+            assert "parse_mode" not in call_args[1]["json"]
 
         await bot.stop()
 

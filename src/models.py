@@ -91,8 +91,13 @@ class Summary:
         persian_digits = "۰۱۲۳۴۵۶۷۸۹"
         return "".join(persian_digits[int(d)] for d in str(n))
 
-    def format_message(self) -> str:
-        """Format the summary for posting to messaging platforms."""
+    def format_message(self, *, html: bool = True) -> str:
+        """Format the summary for posting to messaging platforms.
+
+        Args:
+            html: When True, convert source links to HTML <a> tags (Telegram).
+                  When False, keep raw (label | url) text (Bale).
+        """
         tehran_time = self.created_at.astimezone(TEHRAN_TZ)
         shamsi = jdatetime.datetime.fromgregorian(datetime=tehran_time)
         month_name = jdatetime.date.j_months_fa[shamsi.month - 1]
@@ -110,7 +115,8 @@ class Summary:
         channel_count = self._to_persian_digits(len(self.channels))
         footer = f"\n\n📡 {source_count} خبر از {channel_count} منبع"
 
-        return header + format_html_links(self.content) + footer
+        body = format_html_links(self.content) if html else self.content
+        return header + body + footer
 
 
 # Cloudflare Radar monitoring models

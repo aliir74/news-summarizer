@@ -65,14 +65,13 @@ class BaleBot:
         payload = {
             "chat_id": self.config.bale_channel_id,
             "text": text,
-            "parse_mode": "HTML",
         }
         response = await self.client.post(url, json=payload)
         response.raise_for_status()
 
     async def post_summary(self, summary: Summary) -> bool:
         """Post a summary to the Bale channel."""
-        formatted = summary.format_message()
+        formatted = summary.format_message(html=False)
 
         try:
             messages = split_message(formatted)
