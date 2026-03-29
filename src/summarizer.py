@@ -20,18 +20,21 @@ CRITICAL REQUIREMENTS:
 2. PRESERVE uncertainty language exactly - if the source says "might", "could", "may", "reportedly", keep these words in Persian (ممکن است، شاید، احتمالاً، طبق گزارش‌ها)
 3. MAINTAIN original verb tenses - do not change conditional/future to past tense
 4. If information conflicts between sources, report both versions with attribution
-5. Do NOT add context, background, or information from your training data
 
-Guidelines:
-- Group related news together
-- Keep it brief but informative (2-4 paragraphs)
-- Use clear Persian language
-- Include source attribution where relevant
+OUTPUT FORMAT:
+- Output ONLY bullet points, one per news item or topic
+- Start each bullet with 🔹
+- Each bullet: 1-2 sentences, concise and direct
+- End each bullet with the source name in parentheses, e.g. (الجزیره) or (نیویورک تایمز) or (گاردین)
+- If a news item has a URL, include it as: (SOURCE_LABEL | URL)
+- Rank bullets by importance - most important news first
+- Do NOT use paragraph style, sub-headers, or grouping headers
+- Do NOT add context, background, or information from your training data
 
-News items (with timestamps):
+News items (with timestamps and URLs):
 {messages}
 
-Write a faithful summary in Persian, preserving all uncertainty language:"""
+Write bullet-point summary in Persian:"""
 
 
 ENGLISH_SUMMARY_PROMPT = """Summarize the following English news items accurately and concisely.
@@ -42,13 +45,21 @@ CRITICAL REQUIREMENTS:
 3. Only include information explicitly stated in the news items
 4. Do NOT add external knowledge or context
 
+OUTPUT FORMAT:
+- Output ONLY bullet points, one per news item or topic
+- Start each bullet with 🔹
+- Each bullet: 1-2 sentences maximum
+- End each bullet with the source name in parentheses, e.g. (Al Jazeera) or (NYT)
+- If a news item has a URL, include it as: (SOURCE_LABEL | URL)
+- Rank by importance - most important first
+
 News items:
 {messages}
 
-Summary:"""
+Bullet-point summary:"""
 
 
-RE_SUMMARIZE_PROMPT = """You have several previously-generated Persian news summaries below. Combine them into one concise, coherent Persian summary.
+RE_SUMMARIZE_PROMPT = """You have several previously-generated Persian news summaries below. Combine them into one concise set of bullet points.
 
 CRITICAL REQUIREMENTS:
 1. Remove duplicate or overlapping news items
@@ -56,13 +67,19 @@ CRITICAL REQUIREMENTS:
 3. MAINTAIN original verb tenses - do not change conditional/future to past tense
 4. Do NOT add any information not present in the original summaries
 
+OUTPUT FORMAT:
+- Output ONLY 🔹 bullet points
+- Each bullet: 1-2 sentences, concise
+- Keep source attributions from original bullets
+- Rank by importance
+
 Summaries to combine:
 {summaries}
 
-Write a single combined summary in Persian:"""
+Combined bullet-point summary in Persian:"""
 
 
-TRANSLATION_PROMPT = """Translate the following English news summary to Persian.
+TRANSLATION_PROMPT = """Translate the following English news bullet points to Persian.
 
 CRITICAL: Preserve all uncertainty language exactly:
 - "might" → "ممکن است"
@@ -73,8 +90,9 @@ CRITICAL: Preserve all uncertainty language exactly:
 - "according to" → "به گفته"
 
 Do NOT change verb tenses or add/remove information.
+Keep the 🔹 bullet format and source labels exactly as they are.
 
-English summary:
+English bullet points:
 {summary}
 
 Persian translation:"""
@@ -281,5 +299,8 @@ class Summarizer:
         formatted = []
         for msg in messages:
             timestamp_str = msg.timestamp.strftime("%Y-%m-%d %H:%M")
-            formatted.append(f"[{msg.channel_title} - {timestamp_str}]\n{msg.text}\n")
+            url_line = f"\nURL: {msg.url}" if msg.url else ""
+            formatted.append(
+                f"[{msg.channel_title} - {timestamp_str}]{url_line}\n{msg.text}\n"
+            )
         return "\n---\n".join(formatted)

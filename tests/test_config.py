@@ -76,8 +76,9 @@ class TestConfig:
 
         assert "must be an integer" in str(exc_info.value)
 
+    @patch("src.config.load_dotenv")
     def test_config_default_values(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, mock_load_dotenv: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Test default values are applied."""
         monkeypatch.setenv("TELEGRAM_API_ID", "12345")

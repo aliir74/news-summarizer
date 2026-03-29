@@ -100,89 +100,85 @@ class TestSummary:
 
         assert before <= summary.created_at <= after
 
-    def test_format_message(self) -> None:
-        """Test formatting summary for Telegram posting."""
-        # Use Tehran timezone for created_at so output matches expected time
+    def test_to_persian_digits(self) -> None:
+        """Test converting integers to Persian digit strings."""
+        assert Summary._to_persian_digits(0) == "۰"
+        assert Summary._to_persian_digits(5) == "۵"
+        assert Summary._to_persian_digits(123) == "۱۲۳"
+
+
+class TestSummaryFormatMessage:
+    """Tests for the Summary.format_message redesign with Shamsi dates."""
+
+    def test_shamsi_date_in_header(self) -> None:
+        """Test that Shamsi date appears and Gregorian date does not."""
         tehran_time = datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ)
         summary = Summary(
-            content="خلاصه اخبار تست",
-            source_count=3,
-            channels=["Channel A", "Channel B"],
-            channel_usernames=["channel_a", "channel_b"],
+            content="محتوای تست",
+            source_count=5,
+            channels=["Ch A", "Ch B", "Ch C"],
             created_at=tehran_time,
         )
 
         formatted = summary.format_message()
 
-        # Check header elements
-        assert "📰" in formatted
-        assert "خلاصه اخبار" in formatted
-        assert "2024-01-15 14:30" in formatted
-        assert "(Tehran)" in formatted
-        assert "📊" in formatted
-        assert "3 خبر" in formatted
-        assert "2 کانال" in formatted
-        # Check source channels
-        assert "📡 منابع:" in formatted
-        assert "@channel_a" in formatted
-        assert "@channel_b" in formatted
-        # Check content
-        assert "خلاصه اخبار تست" in formatted
-        # Check separator
-        assert "─" * 20 in formatted
+        # Jan 2024 falls in Shamsi year 1402
+        assert "۱۴۰۲" in formatted
+        # Should NOT contain Gregorian date or "(Tehran)"
+        assert "2024" not in formatted
+        assert "(Tehran)" not in formatted
 
-    def test_format_message_single_channel(self) -> None:
-        """Test formatting with a single channel."""
+    def test_no_separator(self) -> None:
+        """Test that the old separator line is removed."""
         summary = Summary(
-            content="Content",
-            source_count=1,
-            channels=["Single Channel"],
-            created_at=datetime(2024, 1, 15, 12, 0),
+            content="محتوای تست",
+            source_count=2,
+            channels=["Ch A"],
+            created_at=datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ),
         )
 
         formatted = summary.format_message()
 
-        assert "1 خبر" in formatted
-        assert "1 کانال" in formatted
+        assert "─" not in formatted
 
-    def test_format_message_mixed_sources(self) -> None:
-        """Test formatting with both Telegram and RSS sources."""
-        tehran_time = datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ)
+    def test_footer_stats_after_content(self) -> None:
+        """Test that footer stats appear after the content."""
+        content = "این یک محتوای تست است"
         summary = Summary(
-            content="خلاصه اخبار تست",
-            source_count=4,
-            channels=["Channel A", "BBC Persian"],
+            content=content,
+            source_count=5,
+            channels=["Ch A", "Ch B", "Ch C"],
+            created_at=datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ),
+        )
+
+        formatted = summary.format_message()
+
+        expected_footer = "📡 ۵ خبر از ۳ منبع"
+        assert expected_footer in formatted
+        # Footer must come after the content
+        content_pos = formatted.index(content)
+        footer_pos = formatted.index(expected_footer)
+        assert footer_pos > content_pos
+
+    def test_no_source_list(self) -> None:
+        """Test that the old source list (منابع:) no longer appears."""
+        summary = Summary(
+            content="محتوای تست",
+            source_count=3,
+            channels=["Ch A", "Ch B"],
+            channel_usernames=["ch_a", "ch_b"],
             sources=[
-                SourceInfo(name="channel_a", source_type=SourceType.TELEGRAM),
+                SourceInfo(name="ch_a", source_type=SourceType.TELEGRAM),
                 SourceInfo(
                     name="BBC Persian", source_type=SourceType.RSS, domain="bbc.co.uk"
                 ),
             ],
-            created_at=tehran_time,
+            created_at=datetime(2024, 1, 15, 14, 30, tzinfo=TEHRAN_TZ),
         )
 
         formatted = summary.format_message()
 
-        assert "@channel_a" in formatted  # Telegram with @
-        assert "bbc.co.uk" in formatted  # RSS with domain
-        assert "@BBC Persian" not in formatted  # Should NOT have @ for RSS
-
-    def test_format_message_rss_without_domain(self) -> None:
-        """Test formatting RSS source without domain falls back to name."""
-        summary = Summary(
-            content="Content",
-            source_count=1,
-            channels=["Test Feed"],
-            sources=[
-                SourceInfo(name="Test Feed", source_type=SourceType.RSS, domain=""),
-            ],
-            created_at=datetime(2024, 1, 15, 12, 0),
-        )
-
-        formatted = summary.format_message()
-
-        assert "Test Feed" in formatted
-        assert "@Test Feed" not in formatted
+        assert "منابع:" not in formatted
 
 
 class TestSourceInfo:

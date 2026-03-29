@@ -4,6 +4,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pyrogram.enums import ParseMode
 
 from src.config import Config
 from src.models import Summary
@@ -103,6 +104,22 @@ class TestTelegramBot:
 
             call_kwargs = mock_client.send_message.call_args.kwargs
             assert call_kwargs["chat_id"] == "@test_channel"
+
+    async def test_post_summary_uses_html_parse_mode(
+        self, bot: TelegramBot, sample_summary: Summary
+    ) -> None:
+        """Test that summary is posted with HTML parse mode."""
+        with patch("src.telegram_bot.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.send_message = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            await bot.start()
+            await bot.post_summary(sample_summary)
+
+            call_kwargs = mock_client.send_message.call_args.kwargs
+            assert call_kwargs["parse_mode"] == ParseMode.HTML
 
 
 class TestLongSummary:

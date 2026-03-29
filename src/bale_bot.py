@@ -65,6 +65,7 @@ class BaleBot:
         payload = {
             "chat_id": self.config.bale_channel_id,
             "text": text,
+            "parse_mode": "HTML",
         }
         response = await self.client.post(url, json=payload)
         response.raise_for_status()

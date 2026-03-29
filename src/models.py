@@ -6,6 +6,10 @@ from enum import Enum, auto
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+import jdatetime
+
+from src.message_utils import format_html_links
+
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 
@@ -81,28 +85,32 @@ class Summary:
     sources: list[SourceInfo] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
+    @staticmethod
+    def _to_persian_digits(n: int | str) -> str:
+        """Convert integer or digit string to Persian digit string."""
+        persian_digits = "۰۱۲۳۴۵۶۷۸۹"
+        return "".join(persian_digits[int(d)] for d in str(n))
+
     def format_message(self) -> str:
         """Format the summary for posting to messaging platforms."""
-        # Convert to Tehran timezone
         tehran_time = self.created_at.astimezone(TEHRAN_TZ)
-        header = f"📰 خلاصه اخبار - {tehran_time.strftime('%Y-%m-%d %H:%M')} (Tehran)\n"
-        header += f"📊 {self.source_count} خبر از {len(self.channels)} کانال\n"
+        shamsi = jdatetime.datetime.fromgregorian(datetime=tehran_time)
+        month_name = jdatetime.date.j_months_fa[shamsi.month - 1]
+        shamsi_date = (
+            f"{self._to_persian_digits(shamsi.day)} {month_name}"
+            f" {self._to_persian_digits(shamsi.year)}"
+        )
+        shamsi_time = (
+            f"{self._to_persian_digits(f'{shamsi.hour:02d}')}"
+            f":{self._to_persian_digits(f'{shamsi.minute:02d}')}"
+        )
 
-        # Add source channels with proper formatting based on source type
-        if self.sources:
-            formatted = []
-            for source in self.sources:
-                if source.source_type == SourceType.TELEGRAM:
-                    formatted.append(f"@{source.name}")
-                else:  # RSS
-                    formatted.append(source.domain or source.name)
-            header += f"📡 منابع: {' '.join(formatted)}\n"
-        elif self.channel_usernames:  # Backward compatibility
-            sources = " ".join(f"@{username}" for username in self.channel_usernames)
-            header += f"📡 منابع: {sources}\n"
+        header = f"📰 خلاصه اخبار | {shamsi_date} — {shamsi_time}\n\n"
+        source_count = self._to_persian_digits(self.source_count)
+        channel_count = self._to_persian_digits(len(self.channels))
+        footer = f"\n\n📡 {source_count} خبر از {channel_count} منبع"
 
-        header += "─" * 20 + "\n\n"
-        return header + self.content
+        return header + format_html_links(self.content) + footer
 
 
 # Cloudflare Radar monitoring models

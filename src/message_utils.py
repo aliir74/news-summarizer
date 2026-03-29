@@ -1,7 +1,45 @@
 """Shared message utilities for output writers."""
 
+import html
+import re
+
 # Telegram/Bale message character limit
 MAX_MESSAGE_LENGTH = 4096
+
+# Pattern: (source label | URL) at end of bullet
+SOURCE_LINK_PATTERN = re.compile(
+    r"\(([^|()]+?)\s*\|\s*(https?://[^\s)]+)\)"
+)
+
+
+def format_html_links(text: str) -> str:
+    """Convert (source | url) patterns to HTML links and escape other HTML."""
+    matches = list(SOURCE_LINK_PATTERN.finditer(text))
+
+    if not matches:
+        return html.escape(text)
+
+    result = []
+    last_end = 0
+
+    for match in matches:
+        # Escape text before this match
+        result.append(html.escape(text[last_end:match.start()]))
+        # Build HTML link
+        label = html.escape(match.group(1).strip())
+        url = match.group(2).strip()
+        result.append(f'(<a href="{url}">{label}</a>)')
+        last_end = match.end()
+
+    # Escape remaining text
+    result.append(html.escape(text[last_end:]))
+
+    return "".join(result)
+
+
+def _has_balanced_html_tags(text: str) -> bool:
+    """Check if <a> tags are balanced in the text."""
+    return text.count("<a ") == text.count("</a>")
 
 
 def split_message(text: str) -> list[str]:
@@ -39,5 +77,10 @@ def split_message(text: str) -> list[str]:
 
     if current:
         messages.append(current.strip())
+
+    # Validate no broken HTML tags in any chunk
+    for i, msg in enumerate(messages):
+        if not _has_balanced_html_tags(msg):
+            messages[i] = re.sub(r"<[^>]+>", "", msg)
 
     return messages
