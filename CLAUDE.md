@@ -98,9 +98,9 @@ The bot also runs locally as a macOS LaunchAgent that auto-starts on login and r
 
 **Plist:** `~/Library/LaunchAgents/com.aliirani.news-summarizer.plist`
 **Wrapper script:** `scripts/run-service.sh` (loads `.env` and runs the bot)
-**Logs:** `logs/stdout.log`, `logs/stderr.log`
+**Logs:** `~/.news-summarizer/logs/stdout.log`, `~/.news-summarizer/logs/stderr.log`
 
-**Note:** `/bin/bash` must have Full Disk Access in System Settings > Privacy & Security (required because the project is in `~/Downloads`).
+**Note:** Logs and plist WorkingDirectory are outside `~/Downloads` to avoid macOS FDA (Full Disk Access) requirements — launchd cannot write to protected directories like `~/Downloads`.
 
 ```bash
 # Check status
@@ -113,6 +113,6 @@ launchctl load ~/Library/LaunchAgents/com.aliirani.news-summarizer.plist
 launchctl unload ~/Library/LaunchAgents/com.aliirani.news-summarizer.plist
 
 # View logs
-tail -f logs/stderr.log
-tail -f logs/stdout.log
+tail -f ~/.news-summarizer/logs/stderr.log
+tail -f ~/.news-summarizer/logs/stdout.log
 ```

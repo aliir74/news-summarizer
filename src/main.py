@@ -114,6 +114,8 @@ class NewsSummarizer:
             minutes=self.config.effective_summary_interval_minutes,
             id="summarize_news",
             next_run_time=datetime.now(),  # Run immediately on start
+            misfire_grace_time=None,  # Always run even after Mac sleep
+            coalesce=True,  # Merge missed runs into one
         )
 
         # Schedule the radar monitoring job if enabled
@@ -124,6 +126,8 @@ class NewsSummarizer:
                 minutes=self.config.radar_monitor.interval_minutes,
                 id="check_radar",
                 next_run_time=datetime.now(),  # Run immediately on start
+                misfire_grace_time=None,  # Always run even after Mac sleep
+                coalesce=True,  # Merge missed runs into one
             )
 
         self.scheduler.start()

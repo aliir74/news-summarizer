@@ -240,7 +240,7 @@ class Summarizer:
         model: str,
         system_prompt: str,
         user_prompt: str,
-        max_tokens: int = 2000,
+        max_tokens: int = 4000,
     ) -> str | None:
         """Make an LLM API call and return the content."""
         try:
@@ -254,7 +254,13 @@ class Summarizer:
                 temperature=0,
             )
 
-            content = response.choices[0].message.content
+            choice = response.choices[0]
+            if choice.finish_reason == "length":
+                logger.warning(
+                    f"LLM output truncated at max_tokens={max_tokens} ({model}) — "
+                    "consider raising max_tokens or reducing input size"
+                )
+            content = choice.message.content
             if not content:
                 logger.error(f"Empty response from LLM ({model})")
                 return None
