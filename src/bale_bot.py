@@ -151,12 +151,25 @@ class BaleBot:
         except OSError as e:
             logger.warning(f"Could not save Bale retry queue: {e}")
 
+    async def _is_healthy(self) -> bool:
+        """Check if Bale API is reachable with a lightweight getMe call."""
+        try:
+            url = f"{BALE_API_BASE}{self.config.bale_bot_token}/getMe"
+            response = await self.client.get(url)
+            return response.is_success
+        except Exception:
+            return False
+
     async def _flush_queue(self) -> bool:
         """Attempt to send all queued messages. Returns True on success."""
         self._prune_expired()
 
         if not self._queue:
             return True
+
+        if not await self._is_healthy():
+            logger.warning("Bale health check failed, skipping flush to avoid wasting LLM calls")
+            return False
 
         items_to_flush = list(self._queue)
         texts = [item["text"] for item in items_to_flush]

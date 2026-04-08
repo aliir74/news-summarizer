@@ -132,16 +132,28 @@ def split_message(text: str) -> list[str]:
                 messages.append(current.strip())
                 current = ""
 
-            # If single paragraph is too long, split by sentences
+            # If single paragraph is too long, split by lines first, then sentences
             if len(para) > MAX_MESSAGE_LENGTH:
-                sentences = para.split(". ")
-                for sentence in sentences:
-                    if len(current) + len(sentence) + 2 > MAX_MESSAGE_LENGTH:
-                        if current:
-                            messages.append(current.strip())
-                        current = sentence
-                    else:
-                        current = current + ". " + sentence if current else sentence
+                lines = para.split("\n")
+                if len(lines) > 1:
+                    # Paragraph has multiple lines (e.g. bullet points) — split by line
+                    for line in lines:
+                        if len(current) + len(line) + 1 > MAX_MESSAGE_LENGTH:
+                            if current:
+                                messages.append(current.strip())
+                            current = line
+                        else:
+                            current = current + "\n" + line if current else line
+                else:
+                    # Single long line — split by sentences
+                    sentences = para.split(". ")
+                    for sentence in sentences:
+                        if len(current) + len(sentence) + 2 > MAX_MESSAGE_LENGTH:
+                            if current:
+                                messages.append(current.strip())
+                            current = sentence
+                        else:
+                            current = current + ". " + sentence if current else sentence
             else:
                 current = para
         else:

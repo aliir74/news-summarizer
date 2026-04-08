@@ -14,6 +14,27 @@ logger = logging.getLogger(__name__)
 # Pattern to detect Persian/Arabic characters
 PERSIAN_PATTERN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]")
 
+# Pattern: a complete bullet ends with source ref or period/sentence-ending punctuation
+_COMPLETE_BULLET_RE = re.compile(
+    r"[.؟!)\]،]$"  # period, question mark, exclamation, closing paren/bracket, comma
+)
+
+
+def _strip_incomplete_bullet(text: str) -> str:
+    """Remove the last bullet if it appears truncated (no sentence-ending punctuation)."""
+    lines = text.rstrip().split("\n")
+    # Walk backwards to find the last 🔹 bullet
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped.startswith("🔹"):
+            if not _COMPLETE_BULLET_RE.search(stripped):
+                logger.warning("Stripping incomplete trailing bullet: %s", stripped[:80])
+                # Remove this line and any trailing blank lines
+                trimmed = "\n".join(lines[:i]).rstrip()
+                return trimmed
+            break  # last bullet is complete, nothing to strip
+    return text
+
 SUMMARIZATION_PROMPT = """You are a Persian news summarizer. Your task is to create a faithful summary in Persian from the news items below.
 
 CRITICAL REQUIREMENTS:
@@ -255,15 +276,22 @@ class Summarizer:
             )
 
             choice = response.choices[0]
-            if choice.finish_reason == "length":
+            usage = response.usage
+            logger.info(
+                f"LLM response ({model}): finish_reason={choice.finish_reason}, "
+                f"completion_tokens={usage.completion_tokens if usage else '?'}, "
+                f"max_tokens={max_tokens}"
+            )
+            if choice.finish_reason != "stop":
                 logger.warning(
-                    f"LLM output truncated at max_tokens={max_tokens} ({model}) — "
-                    "consider raising max_tokens or reducing input size"
+                    f"LLM finish_reason={choice.finish_reason} ({model}) — "
+                    f"output may be truncated"
                 )
             content = choice.message.content
             if not content:
                 logger.error(f"Empty response from LLM ({model})")
                 return None
+            content = _strip_incomplete_bullet(content)
             return content
 
         except Exception as e:

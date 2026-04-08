@@ -325,8 +325,14 @@ class TestBaleBotRetryQueue:
                 {"text": "queued msg", "queued_at": datetime.now().isoformat()}
             ]
 
-            with patch.object(
-                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            with (
+                patch.object(
+                    bot, "_is_healthy", new_callable=AsyncMock, return_value=True
+                ),
+                patch.object(
+                    bot._client, "post", new_callable=AsyncMock,
+                    return_value=mock_response
+                ),
             ):
                 result = await bot._flush_queue()
 
@@ -345,11 +351,14 @@ class TestBaleBotRetryQueue:
                 {"text": "queued msg", "queued_at": datetime.now().isoformat()}
             ]
 
-            with patch.object(
-                bot._client,
-                "post",
-                new_callable=AsyncMock,
-                side_effect=Exception("still down"),
+            with (
+                patch.object(
+                    bot, "_is_healthy", new_callable=AsyncMock, return_value=True
+                ),
+                patch.object(
+                    bot._client, "post", new_callable=AsyncMock,
+                    side_effect=Exception("still down"),
+                ),
             ):
                 result = await bot._flush_queue()
 
@@ -385,8 +394,14 @@ class TestBaleBotRetryQueue:
                 {"text": "summary 2", "queued_at": now},
             ]
 
-            with patch.object(
-                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            with (
+                patch.object(
+                    bot, "_is_healthy", new_callable=AsyncMock, return_value=True
+                ),
+                patch.object(
+                    bot._client, "post", new_callable=AsyncMock,
+                    return_value=mock_response
+                ),
             ):
                 await bot._flush_queue()
 
@@ -409,8 +424,14 @@ class TestBaleBotRetryQueue:
                 {"text": "only one", "queued_at": datetime.now().isoformat()}
             ]
 
-            with patch.object(
-                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
+            with (
+                patch.object(
+                    bot, "_is_healthy", new_callable=AsyncMock, return_value=True
+                ),
+                patch.object(
+                    bot._client, "post", new_callable=AsyncMock,
+                    return_value=mock_response
+                ),
             ):
                 await bot._flush_queue()
 
@@ -434,14 +455,80 @@ class TestBaleBotRetryQueue:
                 {"text": "newest", "queued_at": now},
             ]
 
-            with patch.object(
-                bot._client, "post", new_callable=AsyncMock, return_value=mock_response
-            ) as mock_post:
+            with (
+                patch.object(
+                    bot, "_is_healthy", new_callable=AsyncMock, return_value=True
+                ),
+                patch.object(
+                    bot._client, "post", new_callable=AsyncMock,
+                    return_value=mock_response
+                ) as mock_post,
+            ):
                 await bot._flush_queue()
 
             # Should have sent the most recent (last) item
             sent_text = mock_post.call_args[1]["json"]["text"]
             assert sent_text == "newest"
+            await bot.stop()
+
+    async def test_flush_skips_when_bale_unhealthy(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that flush skips LLM call when Bale health check fails."""
+        queue_file = tmp_path / "bale_retry_queue"
+        mock_response = MagicMock()
+        mock_response.is_success = False
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            now = datetime.now().isoformat()
+            bot._queue = [
+                {"text": "summary 1", "queued_at": now},
+                {"text": "summary 2", "queued_at": now},
+            ]
+
+            with patch.object(
+                bot._client, "get", new_callable=AsyncMock, return_value=mock_response
+            ):
+                result = await bot._flush_queue()
+
+            assert result is False
+            assert len(bot._queue) == 2
+            bot._summarizer.re_summarize.assert_not_called()
+            await bot.stop()
+
+    async def test_flush_proceeds_when_bale_healthy(
+        self, bot: BaleBot, tmp_path: MagicMock
+    ) -> None:
+        """Test that flush proceeds normally when Bale health check passes."""
+        queue_file = tmp_path / "bale_retry_queue"
+        healthy_response = MagicMock()
+        healthy_response.is_success = True
+        send_response = MagicMock()
+        send_response.raise_for_status = MagicMock()
+
+        with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
+            await bot.start()
+            now = datetime.now().isoformat()
+            bot._queue = [
+                {"text": "summary 1", "queued_at": now},
+                {"text": "summary 2", "queued_at": now},
+            ]
+
+            with (
+                patch.object(
+                    bot._client, "get", new_callable=AsyncMock,
+                    return_value=healthy_response
+                ),
+                patch.object(
+                    bot._client, "post", new_callable=AsyncMock,
+                    return_value=send_response
+                ),
+            ):
+                result = await bot._flush_queue()
+
+            assert result is True
+            bot._summarizer.re_summarize.assert_called_once()
             await bot.stop()
 
     async def test_retry_loop_starts_and_stops(self, bot: BaleBot) -> None:
@@ -508,8 +595,13 @@ class TestBaleBotRetryQueue:
                 bot._queue.append({"text": "added during flush", "queued_at": now})
                 return await original_send(*args, **kwargs)
 
-            with patch.object(
-                bot._client, "post", new_callable=lambda: send_and_add
+            with (
+                patch.object(
+                    bot, "_is_healthy", new_callable=AsyncMock, return_value=True
+                ),
+                patch.object(
+                    bot._client, "post", new_callable=lambda: send_and_add
+                ),
             ):
                 await bot._flush_queue()
 
