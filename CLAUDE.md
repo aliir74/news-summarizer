@@ -42,7 +42,7 @@ uv run pyright src
 - **TelegramBot (telegram_bot.py)** - Pyrogram bot for posting summaries with smart message splitting (4096 char limit)
 - **FileWriter (file_writer.py)** - File output for test mode, writes summaries to text file
 - **OutputWriter (output_writer.py)** - Protocol defining output writer interface (TelegramBot/FileWriter)
-- **BaleBot (bale_bot.py)** - Bale messenger output with persistent retry queue. On send failure, messages are queued to `.bale_retry_queue` and retried every 5 minutes with LLM re-summarization. Items expire after 24 hours.
+- **BaleBot (bale_bot.py)** - Bale messenger output with persistent retry queue. On send failure, messages are queued to `.bale_retry_queue` and retried every 5 minutes. Retries run a health check (`getMe`) before attempting to flush — if Bale is unreachable, the flush is skipped entirely to avoid wasting LLM calls on `re_summarize()`. Items expire after 24 hours.
 - **Summarizer (summarizer.py)** - OpenRouter API integration via OpenAI SDK for Persian summarization (includes `re_summarize()` for condensing multiple summaries)
 - **Models (models.py)** - Data models for messages and sources, HTML output formatting with Shamsi dates (jdatetime) and clickable source links
 - **Config (config.py)** - Loads from environment variables + config/channels.yaml (supports Telegram channels, RSS feeds, Iran filter, test mode)
@@ -55,7 +55,7 @@ uv run pyright src
 5. Messages from both sources are merged and sorted by timestamp
 6. Summarizer sends messages to LLM for Persian summary generation
 7. OutputWriter posts HTML-formatted summary with 🔹 bullet points and clickable source links (TelegramBot in production, FileWriter in test mode)
-7b. If Bale posting fails, message is queued to `.bale_retry_queue` for automatic retry with LLM re-summarization (multiple queued items are condensed into one catch-up message)
+7b. If Bale posting fails, message is queued to `.bale_retry_queue` for automatic retry. Retries health-check Bale first (`getMe`); only if healthy, multiple queued items are condensed via LLM re-summarization into one catch-up message
 8. State persisted: last-check timestamp to state file (.last_check or .last_check.test), seen RSS URLs to .seen_urls file (max 1000 URLs), Bale retry queue to .bale_retry_queue
 
 ## Code Style
