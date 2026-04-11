@@ -26,7 +26,7 @@ def sample_config() -> Config:
         rss_feeds=[
             RSSFeed(name="Test Feed", url="https://example.com/feed.xml"),
         ],
-        iran_filter=IranFilter(enabled=True, keywords=["iran", "tehran"]),
+        iran_filter=IranFilter(enabled=True, keywords=["iran", "tehran", "ایران", "تهران"]),
         deduplication=DeduplicationConfig(enabled=False),
     )
 
@@ -39,21 +39,21 @@ def sample_messages() -> list[Message]:
             id=1,
             channel_username="channel1",
             channel_title="Channel One",
-            text="این یک خبر تست است.",
+            text="این یک خبر تست درباره ایران است.",
             timestamp=datetime(2024, 1, 15, 10, 30),
         ),
         Message(
             id=2,
             channel_username="channel1",
             channel_title="Channel One",
-            text="خبر دوم برای تست.",
+            text="خبر دوم درباره تهران برای تست.",
             timestamp=datetime(2024, 1, 15, 10, 35),
         ),
         Message(
             id=3,
             channel_username="channel2",
             channel_title="Channel Two",
-            text="خبر از کانال دوم.",
+            text="خبر از ایران در کانال دوم.",
             timestamp=datetime(2024, 1, 15, 10, 40),
         ),
     ]

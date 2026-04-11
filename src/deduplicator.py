@@ -15,13 +15,19 @@ logger = logging.getLogger(__name__)
 EXTRACTION_PROMPT = """Extract key information from this news article.
 Return JSON only, no explanation.
 
+Rules for entity extraction:
+- For people: always use their most common full name (e.g. "Donald Trump" not "Trump" or "the president")
+- For countries: always use the country name, not city names (e.g. "Pakistan" not "Islamabad", "Iran" not "Tehran")
+- Include at most 5-7 entities, prioritizing the main actors and countries involved
+- Use English names for entities regardless of article language
+
 Article:
 {text}
 
 Return this exact JSON structure:
 {{
   "topic": "broad category in 1-2 words (e.g. diplomacy, military, economy, politics, sanctions)",
-  "entities": ["key named entities: countries, organizations, people, locations"],
+  "entities": ["key named entities: countries, organizations, people"],
   "event_type": "announcement|reaction|analysis|report|other",
   "keywords": ["3-5", "key", "words"]
 }}"""
@@ -150,6 +156,9 @@ class Deduplicator:
         new_entities = {e.lower() for e in fingerprint.entities}
         new_keywords = {k.lower() for k in fingerprint.keywords}
 
+        # Same-topic articles get relaxed thresholds (65% of configured values)
+        _SAME_TOPIC_FACTOR = 0.65
+
         for stored in recent:
             stored_entities = {e.lower() for e in stored.entities}
 
@@ -166,6 +175,19 @@ class Deduplicator:
                 keyword_total = len(stored_keywords | new_keywords)
                 keyword_similarity = keyword_overlap / keyword_total if keyword_total > 0 else 1.0
 
+                # Use relaxed thresholds for same-topic articles
+                same_topic = stored.topic.lower() == fingerprint.topic.lower()
+                entity_threshold = (
+                    self._dedup_config.similarity_threshold * _SAME_TOPIC_FACTOR
+                    if same_topic
+                    else self._dedup_config.similarity_threshold
+                )
+                keyword_threshold = (
+                    self._dedup_config.keyword_similarity_threshold * _SAME_TOPIC_FACTOR
+                    if same_topic
+                    else self._dedup_config.keyword_similarity_threshold
+                )
+
                 # Log comparison details at DEBUG level
                 logger.debug(
                     f"Comparing with stored article:\n"
@@ -174,18 +196,20 @@ class Deduplicator:
                     f"  New entities: {list(new_entities)}\n"
                     f"  Entity overlap: {overlap}/{total} = {entity_similarity:.2%}\n"
                     f"  Keyword overlap: {keyword_overlap}/{keyword_total} = {keyword_similarity:.2%}\n"
-                    f"  Thresholds: entity={self._dedup_config.similarity_threshold:.2%}, "
-                    f"keyword={self._dedup_config.keyword_similarity_threshold:.2%}"
+                    f"  Same topic: {same_topic} ('{fingerprint.topic}' vs '{stored.topic}')\n"
+                    f"  Thresholds: entity={entity_threshold:.2%}, "
+                    f"keyword={keyword_threshold:.2%}"
                 )
 
                 if (
-                    entity_similarity >= self._dedup_config.similarity_threshold
-                    and keyword_similarity >= self._dedup_config.keyword_similarity_threshold
+                    entity_similarity >= entity_threshold
+                    and keyword_similarity >= keyword_threshold
                 ):
                     logger.info(
                         f"DUPLICATE: '{fingerprint.title[:50]}...' "
                         f"matches '{stored.title[:50]}...' "
-                        f"(entity: {entity_similarity:.2%}, keyword: {keyword_similarity:.2%})"
+                        f"(entity: {entity_similarity:.2%}, keyword: {keyword_similarity:.2%}, "
+                        f"same_topic: {same_topic})"
                     )
                     return True
 

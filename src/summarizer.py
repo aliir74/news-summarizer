@@ -54,6 +54,11 @@ OUTPUT FORMAT:
 - Do NOT use paragraph style, sub-headers, or grouping headers
 - Do NOT add context, background, or information from your training data
 
+MERGING RULE (CRITICAL):
+- If multiple news items cover the SAME event or development, you MUST combine them into ONE bullet with multiple source references like [1,3,5]. Do NOT create separate bullets for the same event from different sources.
+- Different angles, reactions, or updates on the same event belong in the same bullet, not separate bullets.
+- Err on the side of merging: if two items are about the same topic and timeframe, merge them.
+
 News items (with timestamps):
 {messages}
 
@@ -76,6 +81,10 @@ OUTPUT FORMAT:
 - Use the reference numbers from the input headers to attribute your bullets
 - Do NOT include URLs in your output - they will be added automatically
 - Rank by importance - most important first
+
+MERGING RULE (CRITICAL):
+- If multiple news items cover the SAME event or development, you MUST combine them into ONE bullet with multiple source references like [1,3,5]. Do NOT create separate bullets for the same event from different sources.
+- Different angles, reactions, or updates on the same event belong in the same bullet, not separate bullets.
 
 News items:
 {messages}

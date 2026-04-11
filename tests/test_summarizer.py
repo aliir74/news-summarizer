@@ -86,9 +86,9 @@ class TestSummarizer:
 
         assert "Channel One" in formatted
         assert "Channel Two" in formatted
-        assert "این یک خبر تست است" in formatted
-        assert "خبر دوم برای تست" in formatted
-        assert "خبر از کانال دوم" in formatted
+        assert "این یک خبر تست درباره ایران است" in formatted
+        assert "خبر دوم درباره تهران برای تست" in formatted
+        assert "خبر از ایران در کانال دوم" in formatted
         assert "---" in formatted  # Separator between messages
         # Check numbered references
         assert "[1]" in formatted

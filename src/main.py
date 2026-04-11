@@ -192,11 +192,17 @@ class NewsSummarizer:
             )
             logger.info(f"Found {len(rss_messages)} RSS articles")
 
+            filtered_telegram = self.iran_filter.filter_messages(telegram_messages)
+            logger.info(
+                f"Filtered to {len(filtered_telegram)}/{len(telegram_messages)} "
+                f"Iran-related Telegram messages"
+            )
+
             filtered_rss = self.iran_filter.filter_messages(rss_messages)
             logger.info(f"Filtered to {len(filtered_rss)} Iran-related RSS articles")
 
             # Merge all messages
-            messages = telegram_messages + filtered_rss
+            messages = filtered_telegram + filtered_rss
             messages.sort(key=lambda m: m.timestamp, reverse=True)
             logger.info(f"Total {len(messages)} messages before deduplication")
 
