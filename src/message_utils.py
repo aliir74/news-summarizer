@@ -39,8 +39,11 @@ _PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 
 def normalize_bullets(text: str) -> str:
-    """Normalize markdown/numbered bullet prefixes to 🔹."""
-    return BULLET_PATTERN.sub("🔹 ", text)
+    """Normalize markdown/numbered bullet prefixes to 🔹 and ensure spacing."""
+    text = BULLET_PATTERN.sub("🔹 ", text)
+    # Ensure space after 🔹 when LLM outputs it directly without spacing
+    text = re.sub(r"🔹(?! )", "🔹 ", text)
+    return text
 
 
 def resolve_source_refs(text: str, source_refs: SourceRefMap) -> str:
@@ -162,9 +165,34 @@ def split_message(text: str) -> list[str]:
     if current:
         messages.append(current.strip())
 
+    # Merge isolated header/footer chunks with adjacent content
+    messages = _merge_orphaned_ends(messages)
+
     # Validate no broken HTML tags in any chunk
     for i, msg in enumerate(messages):
         if not _has_balanced_html_tags(msg):
             messages[i] = re.sub(r"<[^>]+>", "", msg)
 
     return messages
+
+
+def _merge_orphaned_ends(messages: list[str]) -> list[str]:
+    """Merge isolated header/footer chunks with adjacent content."""
+    if len(messages) <= 1:
+        return messages
+
+    result = list(messages)
+
+    # Merge isolated header (starts with 📰, no bullets) into next chunk
+    if result[0].strip().startswith("📰") and "🔹" not in result[0] and len(result) >= 2:
+        combined = result[0] + "\n\n" + result[1]
+        if len(combined) <= MAX_MESSAGE_LENGTH:
+            result = [combined] + result[2:]
+
+    # Merge isolated footer (contains 📡, no bullets) into previous chunk
+    if "📡" in result[-1] and "🔹" not in result[-1] and len(result) >= 2:
+        combined = result[-2] + "\n\n" + result[-1]
+        if len(combined) <= MAX_MESSAGE_LENGTH:
+            result = result[:-2] + [combined]
+
+    return result
