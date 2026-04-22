@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Telegram Persian News Summarizer Bot - A Python application that monitors Persian news Telegram channels and RSS feeds, generates AI-powered summaries using OpenRouter LLM, and posts summaries to a Telegram channel. Includes keyword-based filtering for Iran-related news from RSS feeds. Runs locally as a macOS LaunchAgent.
+Telegram Persian News Summarizer Bot - A Python application that monitors Persian news Telegram channels and RSS feeds, generates AI-powered summaries using OpenRouter LLM, and posts summaries to a Telegram channel. Includes keyword-based filtering for Iran-related news from RSS feeds. Runs on de-rarecloud VPS under systemd.
 
 ## Commands
 
@@ -92,27 +92,37 @@ This repo is on GitHub under `aliir74` (personal account).
 - Remote URL must use SSH alias: `git@github.com-personal:aliir74/news-summarizer.git`
 - Before pushing or creating PRs, switch gh CLI to `aliir74`: `gh auth switch --user aliir74`
 
-## Local Service (macOS LaunchAgent)
+## VPS Service (systemd)
 
-The bot also runs locally as a macOS LaunchAgent that auto-starts on login and restarts on crash.
+Runs on **de-rarecloud** (85.121.124.176) as a systemd service, auto-starting on boot and restarting on crash.
 
-**Plist:** `~/Library/LaunchAgents/com.aliirani.news-summarizer.plist`
-**Wrapper script:** `scripts/run-service.sh` (loads `.env` and runs the bot)
-**Logs:** `~/.news-summarizer/logs/stdout.log`, `~/.news-summarizer/logs/stderr.log`
+**Code:** `/opt/news-summarizer/` (cloned from `origin/main`)
+**Unit:** `/etc/systemd/system/news-summarizer.service`
+**State files:** `.env`, `.last_check`, `.seen_urls`, `.bale_retry_queue` — all in `/opt/news-summarizer/`
+**Logs:** `journalctl -u news-summarizer`
 
-**Note:** Logs and plist WorkingDirectory are outside `~/Downloads` to avoid macOS FDA (Full Disk Access) requirements — launchd cannot write to protected directories like `~/Downloads`.
+**Deploy workflow:** push to `origin/main`, then `make deploy` from your local repo.
 
 ```bash
-# Check status
-launchctl list | grep news-summarizer
+# Deploy latest main to VPS (git pull + uv sync + restart)
+make deploy
 
-# Start service
-launchctl load ~/Library/LaunchAgents/com.aliirani.news-summarizer.plist
+# Service management
+make status
+make restart
+make start
+make stop
 
-# Stop service
-launchctl unload ~/Library/LaunchAgents/com.aliirani.news-summarizer.plist
+# Logs
+make logs          # last 100 lines
+make logs-follow   # tail -f
 
-# View logs
-tail -f ~/.news-summarizer/logs/stderr.log
-tail -f ~/.news-summarizer/logs/stdout.log
+# SSH into VPS at /opt/news-summarizer/
+make ssh
+
+# Sync .env from local to VPS (destructive — 3s abort window)
+make push-env
+
+# Download state files to ./state-backup/
+make pull-state
 ```
