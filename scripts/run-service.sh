@@ -3,7 +3,7 @@
 
 set -e
 
-cd /Users/aliirani/Downloads/Coding/news-summarizer
+cd /Users/aliirani/Downloads/Coding/personal/news-summarizer
 
 # Load environment variables from .env
 set -a
