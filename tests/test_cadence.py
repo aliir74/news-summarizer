@@ -1,11 +1,24 @@
 """Tests for the adaptive cadence controller."""
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from src.cadence import AdaptiveCadenceController, IntensityLevel
 from src.config import Config
+from src.models import Message
+
+
+def _msg(text: str) -> Message:
+    """Build a minimal Message with the given text."""
+    return Message(
+        id=1,
+        channel_username="ch",
+        channel_title="Ch",
+        text=text,
+        timestamp=datetime(2024, 1, 15, 10, 0),
+    )
 
 
 class TestIntensityLevel:
@@ -89,3 +102,135 @@ class TestStatePersistence:
         controller._load_state()
 
         assert controller.current_interval == 30
+
+
+class TestBaseline:
+    """Tests for the rate baseline computation."""
+
+    def test_empty_window_returns_floor(self, cadence_config: Config) -> None:
+        """Test the baseline is the configured floor when no history exists."""
+        controller = AdaptiveCadenceController(cadence_config)
+
+        assert controller._baseline() == pytest.approx(0.1)
+
+    def test_median_of_window(self, cadence_config: Config) -> None:
+        """Test the baseline is the median of the rate window."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [1.0, 2.0, 3.0]
+
+        assert controller._baseline() == pytest.approx(2.0)
+
+    def test_floor_applies_to_near_zero_history(self, cadence_config: Config) -> None:
+        """Test a near-zero history is floored so a trickle is not a surge."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [0.0, 0.0, 0.0]
+
+        assert controller._baseline() == pytest.approx(0.1)
+
+
+class TestComputeLevel:
+    """Tests for intensity level computation from a message rate."""
+
+    def test_empty_window_returns_normal(self, cadence_config: Config) -> None:
+        """Test no baseline history means NORMAL regardless of the rate."""
+        controller = AdaptiveCadenceController(cadence_config)
+
+        level = controller._compute_level(10.0, crisis_hit=False, radar_alert=False)
+
+        assert level == IntensityLevel.NORMAL
+
+    def test_surge_when_rate_exceeds_surge_ratio(self, cadence_config: Config) -> None:
+        """Test a rate at/above surge_ratio * baseline returns SURGE."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]  # baseline 1.0
+
+        level = controller._compute_level(4.0, crisis_hit=False, radar_alert=False)
+
+        assert level == IntensityLevel.SURGE
+
+    def test_elevated_and_normal_bands(self, cadence_config: Config) -> None:
+        """Test the ELEVATED and NORMAL bands relative to the baseline."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]  # baseline 1.0
+
+        assert (
+            controller._compute_level(2.0, crisis_hit=False, radar_alert=False)
+            == IntensityLevel.ELEVATED
+        )
+        assert (
+            controller._compute_level(1.0, crisis_hit=False, radar_alert=False)
+            == IntensityLevel.NORMAL
+        )
+
+    def test_floor_prevents_trickle_surge(self, cadence_config: Config) -> None:
+        """Test a trickle against a near-zero history does not surge (floor)."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [0.0, 0.0, 0.0]  # baseline floored to 0.1
+
+        # 0.2 / 0.1 = 2.0 => ELEVATED, not SURGE.
+        level = controller._compute_level(0.2, crisis_hit=False, radar_alert=False)
+
+        assert level == IntensityLevel.ELEVATED
+
+    def test_crisis_keyword_forces_surge(self, cadence_config: Config) -> None:
+        """Test a crisis hit forces SURGE even at a normal rate."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+        level = controller._compute_level(0.1, crisis_hit=True, radar_alert=False)
+
+        assert level == IntensityLevel.SURGE
+
+    def test_radar_promotes_one_level(self, cadence_config: Config) -> None:
+        """Test a radar outage flag bumps the level up by one step."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+        # NORMAL rate + radar => ELEVATED.
+        assert (
+            controller._compute_level(1.0, crisis_hit=False, radar_alert=True)
+            == IntensityLevel.ELEVATED
+        )
+        # ELEVATED rate + radar => SURGE.
+        assert (
+            controller._compute_level(2.0, crisis_hit=False, radar_alert=True)
+            == IntensityLevel.SURGE
+        )
+
+    def test_crisis_not_downgraded_by_radar_ordering(self, cadence_config: Config) -> None:
+        """Test crisis SURGE is never downgraded when radar also fires."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+        level = controller._compute_level(0.1, crisis_hit=True, radar_alert=True)
+
+        assert level == IntensityLevel.SURGE
+
+
+class TestHasCrisisKeyword:
+    """Tests for crisis keyword detection."""
+
+    def test_detects_persian_keyword(self, cadence_config: Config) -> None:
+        """Test a Persian crisis keyword is detected."""
+        controller = AdaptiveCadenceController(cadence_config)
+
+        assert controller.has_crisis_keyword([_msg("خبر فوری: جنگ آغاز شد")]) is True
+
+    def test_detects_english_case_insensitive(self, cadence_config: Config) -> None:
+        """Test English keywords match case-insensitively."""
+        controller = AdaptiveCadenceController(cadence_config)
+
+        assert controller.has_crisis_keyword([_msg("Breaking: WAR declared")]) is True
+
+    def test_no_keyword_returns_false(self, cadence_config: Config) -> None:
+        """Test benign messages do not trigger a crisis hit."""
+        controller = AdaptiveCadenceController(cadence_config)
+
+        assert controller.has_crisis_keyword([_msg("Weather is sunny today")]) is False
+
+    def test_empty_keyword_list_never_matches(self, cadence_config: Config) -> None:
+        """Test an empty crisis_keywords list never matches."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller.config.crisis_keywords = []
+
+        assert controller.has_crisis_keyword([_msg("war missile جنگ")]) is False

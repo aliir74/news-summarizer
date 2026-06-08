@@ -7,10 +7,13 @@ surge breaks out and decays gradually back toward the baseline as things calm.
 
 import json
 import logging
+import statistics
+from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
 
 from src.config import Config
+from src.models import Message
 
 logger = logging.getLogger(__name__)
 
@@ -97,3 +100,68 @@ class AdaptiveCadenceController:
             CADENCE_STATE_FILE.write_text(json.dumps(data, indent=2))
         except OSError as e:
             logger.warning(f"Could not save cadence state: {e}")
+
+    def has_crisis_keyword(self, messages: Iterable[Message]) -> bool:
+        """Return True if any message text contains a configured crisis keyword.
+
+        Matching is case-insensitive substring matching. An empty keyword list
+        never matches.
+        """
+        keywords = self.config.crisis_keywords
+        if not keywords:
+            return False
+        lowered = [kw.lower() for kw in keywords]
+        for message in messages:
+            text = message.text.lower()
+            if any(kw in text for kw in lowered):
+                return True
+        return False
+
+    def _baseline(self) -> float:
+        """Return the baseline rate: median of the window, floored.
+
+        The min_baseline_rate floor prevents a near-zero history from turning a
+        trickle of messages into a false surge (divide-by-near-zero).
+        """
+        floor = self.config.min_baseline_rate
+        if not self._rate_window:
+            return floor
+        return max(statistics.median(self._rate_window), floor)
+
+    def _compute_level(
+        self, rate: float, *, crisis_hit: bool, radar_alert: bool
+    ) -> IntensityLevel:
+        """Map a message rate (plus signals) to an intensity level.
+
+        Ordering matters: the volume-ratio mapping runs first, then a radar
+        outage promotes one level, then a crisis keyword hard-sets SURGE last so
+        it can never be downgraded.
+        """
+        # With no baseline history we cannot judge a surge from volume alone.
+        if self._rate_window:
+            ratio = rate / self._baseline()
+            if ratio >= self.config.surge_ratio:
+                level = IntensityLevel.SURGE
+            elif ratio >= self.config.elevated_ratio:
+                level = IntensityLevel.ELEVATED
+            else:
+                level = IntensityLevel.NORMAL
+        else:
+            level = IntensityLevel.NORMAL
+
+        if radar_alert:
+            level = self._promote(level)
+
+        if crisis_hit:
+            level = IntensityLevel.SURGE
+
+        return level
+
+    @staticmethod
+    def _promote(level: IntensityLevel) -> IntensityLevel:
+        """Bump a level up one step (NORMAL -> ELEVATED -> SURGE)."""
+        if level is IntensityLevel.NORMAL:
+            return IntensityLevel.ELEVATED
+        if level is IntensityLevel.ELEVATED:
+            return IntensityLevel.SURGE
+        return IntensityLevel.SURGE
