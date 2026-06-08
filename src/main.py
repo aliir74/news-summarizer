@@ -224,6 +224,9 @@ class NewsSummarizer:
             messages.sort(key=lambda m: m.timestamp, reverse=True)
             logger.info(f"Total {len(messages)} messages before deduplication")
 
+            # Adapt the summary cadence from the pre-dedup filtered message rate.
+            self._apply_adaptive_cadence(messages, since)
+
             # Apply deduplication if enabled
             if self.config.deduplication.enabled and messages:
                 messages = self.deduplicator.process_messages(messages)
@@ -262,6 +265,37 @@ class NewsSummarizer:
 
         except Exception as e:
             logger.error(f"Error in summarization job: {e}", exc_info=True)
+
+    def _apply_adaptive_cadence(self, filtered_messages: list, since: datetime) -> None:
+        """Feed the measured message rate into the cadence controller and reschedule.
+
+        Uses the pre-dedup filtered count over the elapsed window so the rate is
+        independent of the current interval and not coupled to the LLM dedup
+        pipeline. Reschedules the summarize job only when the interval changes;
+        the change takes effect from the next fire, not the current run.
+        """
+        controller = self.cadence_controller
+        if controller is None:
+            return
+
+        elapsed_minutes = max((datetime.now() - since).total_seconds() / 60, 0.5)
+        rate = len(filtered_messages) / elapsed_minutes
+        crisis_hit = controller.has_crisis_keyword(filtered_messages)
+
+        previous_interval = controller.current_interval
+        next_interval = controller.record_and_compute(
+            rate, crisis_hit=crisis_hit, radar_alert=self._recent_radar_alert
+        )
+        self._recent_radar_alert = False
+
+        if next_interval != previous_interval:
+            self.scheduler.reschedule_job(
+                "summarize_news", trigger="interval", minutes=next_interval
+            )
+            logger.info(
+                f"Adaptive cadence: {previous_interval}min -> {next_interval}min "
+                f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
+            )
 
     async def _check_radar_job(self) -> None:
         """Job that checks Cloudflare Radar for alerts."""

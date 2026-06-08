@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +12,19 @@ from src.composite_writer import CompositeOutputWriter
 from src.config import Config
 from src.file_writer import FileWriter
 from src.main import MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer
+from src.models import Message
 from src.telegram_bot import TelegramBot
+
+
+def _iran_msg(text: str = "خبری درباره ایران و تهران") -> Message:
+    """Build a minimal Iran-related Message that passes the iran filter."""
+    return Message(
+        id=1,
+        channel_username="ch",
+        channel_title="Ch",
+        text=text,
+        timestamp=datetime(2024, 1, 15, 10, 0),
+    )
 
 
 @pytest.fixture
@@ -100,6 +112,83 @@ class TestCadenceLifecycle:
 
             await summarizer.stop()
             mock_save.assert_called_once()
+
+
+class TestCadenceInSummarizeJob:
+    """Tests for adaptive cadence rescheduling inside _summarize_job."""
+
+    async def _run_job(
+        self,
+        summarizer: NewsSummarizer,
+        telegram_messages: list[Message],
+    ) -> AsyncMock:
+        """Run _summarize_job with patched IO and return the reschedule mock."""
+        summarizer._last_check = datetime.now() - timedelta(minutes=30)
+        with (
+            patch.object(
+                summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=telegram_messages,
+            ),
+            patch.object(
+                summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(summarizer.summarizer, "summarize_news", return_value=None),
+            patch.object(summarizer.scheduler, "reschedule_job") as mock_reschedule,
+        ):
+            await summarizer._summarize_job()
+        return mock_reschedule
+
+    async def test_high_rate_reschedules_shorter(self, cadence_config: Config) -> None:
+        """Test a high message rate reschedules to a shorter interval."""
+        summarizer = NewsSummarizer(cadence_config)
+        assert summarizer.cadence_controller is not None
+        # Seed a low baseline so the burst reads as a surge.
+        summarizer.cadence_controller._rate_window = [0.1, 0.1, 0.1, 0.1, 0.1]
+
+        mock_reschedule = await self._run_job(summarizer, [_iran_msg() for _ in range(50)])
+
+        mock_reschedule.assert_called_once()
+        kwargs = mock_reschedule.call_args.kwargs
+        assert kwargs["minutes"] < 30
+
+    async def test_disabled_never_reschedules(
+        self, news_summarizer: NewsSummarizer
+    ) -> None:
+        """Test no rescheduling happens when adaptive cadence is disabled."""
+        assert news_summarizer.cadence_controller is None
+
+        mock_reschedule = await self._run_job(news_summarizer, [_iran_msg()])
+
+        mock_reschedule.assert_not_called()
+
+    async def test_crisis_keyword_forces_shortest(self, cadence_config: Config) -> None:
+        """Test a crisis keyword reschedules straight to the floor interval."""
+        summarizer = NewsSummarizer(cadence_config)
+        assert summarizer.cadence_controller is not None
+        summarizer.cadence_controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+        mock_reschedule = await self._run_job(
+            summarizer, [_iran_msg("جنگ در ایران آغاز شد")]
+        )
+
+        mock_reschedule.assert_called_once()
+        assert mock_reschedule.call_args.kwargs["minutes"] == 5  # min_interval_minutes
+
+    async def test_radar_flag_consumed(self, cadence_config: Config) -> None:
+        """Test the recent-radar-alert flag is reset after one summarize run."""
+        summarizer = NewsSummarizer(cadence_config)
+        assert summarizer.cadence_controller is not None
+        summarizer.cadence_controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+        summarizer._recent_radar_alert = True
+
+        await self._run_job(summarizer, [_iran_msg()])
+
+        assert summarizer._recent_radar_alert is False
 
     async def test_summarize_job_with_messages(
         self, news_summarizer: NewsSummarizer, sample_messages: list, sample_summary: MagicMock
