@@ -48,6 +48,39 @@ class RadarMonitorConfig:
 
 
 @dataclass
+class AdaptiveCadenceConfig:
+    """Configuration for the reflective adaptive summary cadence.
+
+    When enabled, the summary interval shortens as news intensity rises (a
+    surge) and decays back toward the baseline (summary_interval_minutes) as
+    things calm. Intensity is measured as a pre-dedup filtered message rate in
+    messages per minute, so the signal is independent of the current window
+    length.
+    """
+
+    enabled: bool = False
+    min_interval_minutes: int = 5  # Floor cadence during a surge
+    max_interval_minutes: int | None = None  # Optional ceiling; None caps at baseline
+    baseline_window: int = 10  # Number of recent rate samples kept for the baseline
+    elevated_ratio: float = 2.0  # rate >= elevated_ratio * baseline => ELEVATED
+    surge_ratio: float = 4.0  # rate >= surge_ratio * baseline => SURGE
+    decay_factor: float = 1.5  # Multiply interval by this per calm run when decaying
+    min_baseline_rate: float = 0.1  # Floor for the baseline rate (messages per minute)
+    fast_escalation: bool = False  # Run the cheap escalation probe between summary runs
+    probe_interval_minutes: int = 5  # Probe cadence when fast_escalation is on
+    crisis_keywords: list[str] = field(default_factory=lambda: [
+        "جنگ",
+        "حمله",
+        "موشک",
+        "حمله هوایی",
+        "war",
+        "strike",
+        "attack",
+        "missile",
+    ])
+
+
+@dataclass
 class DeduplicationConfig:
     """Configuration for article deduplication."""
 
@@ -91,6 +124,9 @@ class Config:
     # Cloudflare Radar monitoring
     cloudflare_api_token: str = ""
     radar_monitor: RadarMonitorConfig = field(default_factory=RadarMonitorConfig)
+
+    # Adaptive (reflective) summary cadence
+    adaptive_cadence: AdaptiveCadenceConfig = field(default_factory=AdaptiveCadenceConfig)
 
     # Bale Messenger (optional)
     bale_bot_token: str = ""
@@ -149,6 +185,7 @@ class Config:
         iran_filter = IranFilter()
         radar_monitor = RadarMonitorConfig()
         deduplication = DeduplicationConfig()
+        adaptive_cadence = AdaptiveCadenceConfig()
 
         # Determine channels file based on test mode
         if channels_file is None:
@@ -163,9 +200,14 @@ class Config:
 
         channels_path = Path(channels_file)
         if channels_path.exists():
-            channels, rss_feeds, iran_filter, radar_monitor, deduplication = _load_sources_yaml(
-                channels_path
-            )
+            (
+                channels,
+                rss_feeds,
+                iran_filter,
+                radar_monitor,
+                deduplication,
+                adaptive_cadence,
+            ) = _load_sources_yaml(channels_path)
 
         # Parse API ID as integer
         try:
@@ -191,6 +233,7 @@ class Config:
             bale_channel_id=os.getenv("BALE_CHANNEL_ID", ""),
             cloudflare_api_token=os.getenv("CLOUDFLARE_API_TOKEN", ""),
             radar_monitor=radar_monitor,
+            adaptive_cadence=adaptive_cadence,
             deduplication=deduplication,
             test_mode=test_mode,
             test_summary_interval_minutes=int(os.getenv("TEST_SUMMARY_INTERVAL_MINUTES", "5")),
@@ -201,14 +244,28 @@ class Config:
 
 def _load_sources_yaml(
     path: Path,
-) -> tuple[list[str], list[RSSFeed], IranFilter, RadarMonitorConfig, DeduplicationConfig]:
+) -> tuple[
+    list[str],
+    list[RSSFeed],
+    IranFilter,
+    RadarMonitorConfig,
+    DeduplicationConfig,
+    AdaptiveCadenceConfig,
+]:
     """Load sources configuration from YAML file."""
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
 
         if not data:
-            return [], [], IranFilter(), RadarMonitorConfig(), DeduplicationConfig()
+            return (
+                [],
+                [],
+                IranFilter(),
+                RadarMonitorConfig(),
+                DeduplicationConfig(),
+                AdaptiveCadenceConfig(),
+            )
 
         # Load Telegram channels (support both old 'channels' and new 'telegram_channels' keys)
         channels: list[str] = []
@@ -265,7 +322,46 @@ def _load_sources_yaml(
                 ttl_days=int(ttl_days),
             )
 
-        return channels, rss_feeds, iran_filter, radar_monitor, deduplication
+        # Load adaptive cadence configuration
+        adaptive_cadence = AdaptiveCadenceConfig()
+        raw_cadence = data.get("adaptive_cadence")
+        if isinstance(raw_cadence, dict):
+            defaults = AdaptiveCadenceConfig()
+            raw_max = raw_cadence.get("max_interval_minutes", defaults.max_interval_minutes)
+            max_interval = int(raw_max) if raw_max is not None else None
+            raw_keywords = raw_cadence.get("crisis_keywords")
+            crisis_keywords = (
+                [str(k) for k in raw_keywords if k is not None]
+                if isinstance(raw_keywords, list)
+                else defaults.crisis_keywords
+            )
+            adaptive_cadence = AdaptiveCadenceConfig(
+                enabled=bool(raw_cadence.get("enabled", defaults.enabled)),
+                min_interval_minutes=int(
+                    raw_cadence.get("min_interval_minutes", defaults.min_interval_minutes)
+                ),
+                max_interval_minutes=max_interval,
+                baseline_window=int(
+                    raw_cadence.get("baseline_window", defaults.baseline_window)
+                ),
+                elevated_ratio=float(
+                    raw_cadence.get("elevated_ratio", defaults.elevated_ratio)
+                ),
+                surge_ratio=float(raw_cadence.get("surge_ratio", defaults.surge_ratio)),
+                decay_factor=float(raw_cadence.get("decay_factor", defaults.decay_factor)),
+                min_baseline_rate=float(
+                    raw_cadence.get("min_baseline_rate", defaults.min_baseline_rate)
+                ),
+                fast_escalation=bool(
+                    raw_cadence.get("fast_escalation", defaults.fast_escalation)
+                ),
+                probe_interval_minutes=int(
+                    raw_cadence.get("probe_interval_minutes", defaults.probe_interval_minutes)
+                ),
+                crisis_keywords=crisis_keywords,
+            )
+
+        return channels, rss_feeds, iran_filter, radar_monitor, deduplication, adaptive_cadence
 
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in sources file: {e}") from e
