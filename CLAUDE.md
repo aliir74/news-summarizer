@@ -44,8 +44,9 @@ uv run pyright src
 - **OutputWriter (output_writer.py)** - Protocol defining output writer interface (TelegramBot/FileWriter)
 - **BaleBot (bale_bot.py)** - Bale messenger output with persistent retry queue. On send failure, messages are queued to `.bale_retry_queue` and retried every 5 minutes. Retries run a health check (`getMe`) before attempting to flush — if Bale is unreachable, the flush is skipped entirely to avoid wasting LLM calls on `re_summarize()`. Items expire after 24 hours.
 - **Summarizer (summarizer.py)** - OpenRouter API integration via OpenAI SDK for Persian summarization (includes `re_summarize()` for condensing multiple summaries)
+- **AdaptiveCadenceController (cadence.py)** - Optional reflective cadence. Measures news intensity as a pre-dedup filtered message rate (messages/min) over a rolling window, maps it to an `IntensityLevel` (NORMAL/ELEVATED/SURGE), and returns the next summary interval: escalation is immediate (down to `min_interval_minutes`), decay is gradual (interval grows by `decay_factor` per calm run, capped at `SUMMARY_INTERVAL_MINUTES` or `max_interval_minutes`). Crisis keywords force SURGE; a Cloudflare Radar outage promotes one level. State persists to `.cadence_state`. Gated behind `adaptive_cadence.enabled`; an optional escalate-only probe (`fast_escalation`) tightens cadence between runs.
 - **Models (models.py)** - Data models for messages and sources, HTML output formatting with Shamsi dates (jdatetime) and clickable source links
-- **Config (config.py)** - Loads from environment variables + config/channels.yaml (supports Telegram channels, RSS feeds, Iran filter, test mode)
+- **Config (config.py)** - Loads from environment variables + config/channels.yaml (supports Telegram channels, RSS feeds, Iran filter, adaptive cadence, test mode)
 
 **Data Flow:**
 1. Scheduler triggers at configured interval (default: 30 min production, 5 min test mode)
@@ -56,7 +57,8 @@ uv run pyright src
 6. Summarizer sends messages to LLM for Persian summary generation
 7. OutputWriter posts HTML-formatted summary with 🔹 bullet points and clickable source links (TelegramBot in production, FileWriter in test mode)
 7b. If Bale posting fails, message is queued to `.bale_retry_queue` for automatic retry. Retries health-check Bale first (`getMe`); only if healthy, multiple queued items are condensed via LLM re-summarization into one catch-up message
-8. State persisted: last-check timestamp to state file (.last_check or .last_check.test), seen RSS URLs to .seen_urls file (max 1000 URLs), Bale retry queue to .bale_retry_queue
+7c. If adaptive cadence is enabled, the pre-dedup filtered message rate (computed in step 4/5, before dedup) is fed to AdaptiveCadenceController, which reschedules the `summarize_news` job when the interval changes. With `fast_escalation`, a separate `probe_intensity` job runs every `probe_interval_minutes` to count messages cheaply (no LLM) and can escalate (or fire an immediate catch-up on a crisis keyword) between full runs.
+8. State persisted: last-check timestamp to state file (.last_check or .last_check.test), seen RSS URLs to .seen_urls file (max 1000 URLs), Bale retry queue to .bale_retry_queue, cadence window + current interval to .cadence_state
 
 ## Code Style
 
@@ -98,7 +100,7 @@ Runs on **de-rarecloud** (85.121.124.176) as a systemd service, auto-starting on
 
 **Code:** `/opt/news-summarizer/` (cloned from `origin/main`)
 **Unit:** `/etc/systemd/system/news-summarizer.service`
-**State files:** `.env`, `.last_check`, `.seen_urls`, `.bale_retry_queue` — all in `/opt/news-summarizer/`
+**State files:** `.env`, `.last_check`, `.seen_urls`, `.bale_retry_queue`, `.cadence_state` — all in `/opt/news-summarizer/`
 **Logs:** `journalctl -u news-summarizer`
 
 **Deploy workflow:** push to `origin/main`, then `make deploy` from your local repo.

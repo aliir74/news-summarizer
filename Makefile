@@ -60,4 +60,5 @@ pull-state:
 	scp $(SSH_HOST):$(REMOTE_DIR)/.last_check state-backup/
 	scp $(SSH_HOST):$(REMOTE_DIR)/.seen_urls state-backup/
 	scp $(SSH_HOST):$(REMOTE_DIR)/.bale_retry_queue state-backup/
+	-scp $(SSH_HOST):$(REMOTE_DIR)/.cadence_state state-backup/
 	@echo ">>> state files saved to ./state-backup/"
