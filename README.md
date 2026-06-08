@@ -107,6 +107,33 @@ channels:
 
 Note: Your Telegram account must be able to view these channels (public channels or channels you've joined).
 
+### 8. (Optional) Reflective Adaptive Cadence
+
+By default the bot summarizes on a flat interval (`SUMMARY_INTERVAL_MINUTES`). You can make it reactive instead: it measures news intensity each run as a pre-dedup filtered message rate (messages per minute, so the signal does not depend on the current interval) and adapts the cadence:
+
+- **Escalation is immediate.** When the rate spikes above the baseline (a war breaks out, a major event), or a crisis keyword appears, or a Cloudflare Radar internet outage fires, the interval shortens at once, down to `min_interval_minutes` at a full surge.
+- **Decay is gradual.** As things calm, the interval grows back by `decay_factor` each quiet run, never overshooting `SUMMARY_INTERVAL_MINUTES` (the steady-state baseline) unless you set `max_interval_minutes` higher.
+- **Optional cold-start probe.** With `fast_escalation: true`, a cheap probe runs every `probe_interval_minutes`, counting messages with no LLM call, and can tighten the cadence (or fire an immediate catch-up on a crisis keyword) between full summary runs. It can only escalate, never relax.
+
+Enable it in `config/channels.yaml`:
+
+```yaml
+adaptive_cadence:
+  enabled: true
+  min_interval_minutes: 5    # Floor cadence during a surge
+  # max_interval_minutes: 60 # Optional; omit to cap at the baseline
+  baseline_window: 10        # Recent rate samples for the median baseline
+  elevated_ratio: 2.0        # >= 2x baseline => half interval
+  surge_ratio: 4.0           # >= 4x baseline => min_interval
+  decay_factor: 1.5          # Interval growth per calm run
+  min_baseline_rate: 0.1     # Baseline floor, in messages per minute
+  fast_escalation: false     # Cheap escalate-only probe between runs
+  probe_interval_minutes: 5
+  crisis_keywords: ["جنگ", "حمله", "موشک", "war", "strike", "attack", "missile"]
+```
+
+Cadence state (the rate window and current interval) is persisted to `.cadence_state` so it survives restarts.
+
 ## Running Locally
 
 ```bash

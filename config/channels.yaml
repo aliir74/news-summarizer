@@ -55,3 +55,29 @@ deduplication:
   similarity_threshold: 0.6  # 60% entity overlap = duplicate
   keyword_similarity_threshold: 0.3  # 30% keyword overlap required
   ttl_days: 3                # Keep fingerprints for 3 days
+
+# Reflective adaptive summary cadence (disabled by default).
+# When enabled, the summary interval shortens as news intensity rises (a surge)
+# and decays back toward SUMMARY_INTERVAL_MINUTES as things calm. Intensity is a
+# pre-dedup filtered message RATE (messages per minute), so it is independent of
+# the current interval.
+adaptive_cadence:
+  enabled: false           # Master switch; keep false to preserve fixed cadence
+  min_interval_minutes: 5  # Floor cadence during a surge
+  # max_interval_minutes: 60  # Optional ceiling; omit to cap at the baseline
+  baseline_window: 10      # Recent rate samples kept for the baseline (median)
+  elevated_ratio: 2.0      # rate >= elevated_ratio * baseline => ELEVATED (~half interval)
+  surge_ratio: 4.0         # rate >= surge_ratio * baseline => SURGE (min_interval)
+  decay_factor: 1.5        # Interval grows by this factor per calm run when decaying
+  min_baseline_rate: 0.1   # Floor for the baseline rate, in MESSAGES PER MINUTE
+  fast_escalation: false   # Run a cheap escalate-only probe between summary runs
+  probe_interval_minutes: 5  # Probe cadence when fast_escalation is on
+  crisis_keywords:         # A single hit forces an immediate SURGE
+    - "جنگ"
+    - "حمله"
+    - "موشک"
+    - "حمله هوایی"
+    - "war"
+    - "strike"
+    - "attack"
+    - "missile"

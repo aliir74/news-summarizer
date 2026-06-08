@@ -12,12 +12,14 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.bale_bot import BaleBot
+from src.cadence import AdaptiveCadenceController
 from src.cloudflare_radar import CloudflareRadarMonitor
 from src.composite_writer import CompositeOutputWriter
 from src.config import Config, ConfigError
 from src.deduplicator import Deduplicator
 from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
+from src.models import Message
 from src.output_writer import OutputWriter
 from src.rss_reader import RSSReader
 from src.summarizer import Summarizer
@@ -72,6 +74,14 @@ class NewsSummarizer:
         self._seen_urls: set[str] = set()
         self._running = False
 
+        # Adaptive cadence controller (optional). Tracks the recent radar alert
+        # state so the controller can treat an internet outage as a crisis signal.
+        self._recent_radar_alert = False
+        self.cadence_controller: AdaptiveCadenceController | None = None
+        if config.adaptive_cadence.enabled:
+            self.cadence_controller = AdaptiveCadenceController(config)
+            logger.info("Adaptive cadence enabled")
+
         # Cloudflare Radar monitor (optional)
         self.radar_monitor: CloudflareRadarMonitor | None = None
         if config.radar_monitor.enabled and config.cloudflare_api_token:
@@ -92,6 +102,11 @@ class NewsSummarizer:
         # Load last check timestamp and seen URLs
         self._load_last_check()
         self._load_seen_urls()
+
+        # Load cadence state before the scheduler starts (the first summarize job
+        # fires immediately, so the controller must be warm beforehand).
+        if self.cadence_controller:
+            self.cadence_controller.load_state()
 
         # Start clients
         await self.telegram_reader.start()
@@ -130,6 +145,21 @@ class NewsSummarizer:
                 coalesce=True,  # Merge missed runs into one
             )
 
+        # Schedule the escalation probe job if fast escalation is enabled
+        if self.cadence_controller and self.config.adaptive_cadence.fast_escalation:
+            self.scheduler.add_job(
+                self._probe_intensity_job,
+                "interval",
+                minutes=self.config.adaptive_cadence.probe_interval_minutes,
+                id="probe_intensity",
+                misfire_grace_time=None,  # Always run even after Mac sleep
+                coalesce=True,  # Merge missed runs into one
+            )
+            logger.info(
+                f"Fast escalation probe active every "
+                f"{self.config.adaptive_cadence.probe_interval_minutes} minutes."
+            )
+
         self.scheduler.start()
 
         self._running = True
@@ -156,6 +186,10 @@ class NewsSummarizer:
         # Save last check timestamp and seen URLs
         self._save_last_check()
         self._save_seen_urls()
+
+        # Persist cadence state so it survives restarts (systemd on the VPS).
+        if self.cadence_controller:
+            self.cadence_controller.save_state()
 
         # Stop deduplicator if enabled
         if self.config.deduplication.enabled:
@@ -206,6 +240,9 @@ class NewsSummarizer:
             messages.sort(key=lambda m: m.timestamp, reverse=True)
             logger.info(f"Total {len(messages)} messages before deduplication")
 
+            # Adapt the summary cadence from the pre-dedup filtered message rate.
+            self._apply_adaptive_cadence(messages, since)
+
             # Apply deduplication if enabled
             if self.config.deduplication.enabled and messages:
                 messages = self.deduplicator.process_messages(messages)
@@ -245,6 +282,93 @@ class NewsSummarizer:
         except Exception as e:
             logger.error(f"Error in summarization job: {e}", exc_info=True)
 
+    def _apply_adaptive_cadence(
+        self, filtered_messages: list[Message], since: datetime
+    ) -> None:
+        """Feed the measured message rate into the cadence controller and reschedule.
+
+        Uses the pre-dedup filtered count over the elapsed window so the rate is
+        independent of the current interval and not coupled to the LLM dedup
+        pipeline. Reschedules the summarize job only when the interval changes;
+        the change takes effect from the next fire, not the current run.
+        """
+        controller = self.cadence_controller
+        if controller is None:
+            return
+
+        elapsed_minutes = max((datetime.now() - since).total_seconds() / 60, 0.5)
+        rate = len(filtered_messages) / elapsed_minutes
+        crisis_hit = controller.has_crisis_keyword(filtered_messages)
+
+        previous_interval = controller.current_interval
+        next_interval = controller.record_and_compute(
+            rate, crisis_hit=crisis_hit, radar_alert=self._recent_radar_alert
+        )
+        self._recent_radar_alert = False
+
+        if next_interval != previous_interval:
+            self.scheduler.reschedule_job(
+                "summarize_news", trigger="interval", minutes=next_interval
+            )
+            logger.info(
+                f"Adaptive cadence: {previous_interval}min -> {next_interval}min "
+                f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
+            )
+
+    async def _probe_intensity_job(self) -> None:
+        """Cheap escalate-only probe to bound cold-start detection latency.
+
+        Counts filtered messages over a short trailing window (no LLM, no dedup,
+        no posting) and may tighten the summary cadence between full runs. It is
+        strictly side-effect-free: it never mutates _seen_urls, advances
+        _last_check, or summarizes. It can only escalate, never relax, leaving
+        decay to the real summarize runs.
+        """
+        controller = self.cadence_controller
+        if controller is None:
+            return
+
+        try:
+            probe_minutes = self.config.adaptive_cadence.probe_interval_minutes
+            since = datetime.now() - timedelta(minutes=probe_minutes)
+
+            telegram_messages = await self.telegram_reader.get_all_channel_updates(since)
+            # Pass a throwaway empty set so the probe never mutates the real
+            # seen-URL state that the next summarize run depends on.
+            rss_messages = await self.rss_reader.get_all_feed_updates(since, seen_urls=set())
+
+            filtered = self.iran_filter.filter_messages(
+                telegram_messages
+            ) + self.iran_filter.filter_messages(rss_messages)
+
+            rate = len(filtered) / probe_minutes
+            crisis_hit = controller.has_crisis_keyword(filtered)
+
+            # Consume the radar flag here too so a one-shot outage cannot keep
+            # re-promoting on every probe tick; whichever job runs first wins.
+            radar_alert = self._recent_radar_alert
+            self._recent_radar_alert = False
+            result = controller.consider_escalation(
+                rate, crisis_hit=crisis_hit, radar_alert=radar_alert
+            )
+            if result is not None:
+                self.scheduler.reschedule_job(
+                    "summarize_news", trigger="interval", minutes=result
+                )
+                logger.info(
+                    f"Probe escalated cadence to {result}min "
+                    f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
+                )
+                if crisis_hit:
+                    # A crisis just broke; post a catch-up summary immediately.
+                    self.scheduler.modify_job(
+                        "summarize_news", next_run_time=datetime.now()
+                    )
+                    logger.info("Probe triggered an immediate catch-up summary")
+
+        except Exception as e:
+            logger.error(f"Error in intensity probe job: {e}", exc_info=True)
+
     async def _check_radar_job(self) -> None:
         """Job that checks Cloudflare Radar for alerts."""
         if not self.radar_monitor:
@@ -261,7 +385,11 @@ class NewsSummarizer:
                 else:
                     logger.error(f"Failed to post radar alert: {alert.alert_type.value}")
 
-            if not alerts:
+            if alerts:
+                # An internet outage is a likely crisis signal; surface it to the
+                # cadence controller on the next summarize run.
+                self._recent_radar_alert = True
+            else:
                 logger.info("No radar alerts to send")
 
         except Exception as e:

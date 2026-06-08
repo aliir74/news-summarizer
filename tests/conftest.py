@@ -6,7 +6,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.config import Config, DeduplicationConfig, IranFilter, RadarMonitorConfig, RSSFeed
+from src.config import (
+    AdaptiveCadenceConfig,
+    Config,
+    DeduplicationConfig,
+    IranFilter,
+    RadarMonitorConfig,
+    RSSFeed,
+)
 from src.models import Anomaly, AnomalyStatus, Message, SourceType, Summary
 
 
@@ -194,6 +201,25 @@ def radar_config(sample_config: Config) -> Config:
             interval_minutes=60,
             change_threshold_percent=5.0,
             alert_cooldown_hours=0,
+        ),
+    )
+
+
+@pytest.fixture
+def cadence_config(sample_config: Config) -> Config:
+    """Create a sample configuration with adaptive cadence enabled."""
+    return replace(
+        sample_config,
+        summary_interval_minutes=30,
+        adaptive_cadence=AdaptiveCadenceConfig(
+            enabled=True,
+            min_interval_minutes=5,
+            baseline_window=5,
+            elevated_ratio=2.0,
+            surge_ratio=4.0,
+            decay_factor=1.5,
+            min_baseline_rate=0.1,
+            crisis_keywords=["جنگ", "موشک", "war", "missile"],
         ),
     )
 

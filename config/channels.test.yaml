@@ -17,3 +17,20 @@ iran_filter:
     - "iranian"
     - "tehran"
     - "ایران"
+
+# Adaptive cadence enabled in test mode to exercise escalation quickly
+adaptive_cadence:
+  enabled: true
+  min_interval_minutes: 1   # Tight floor so surges are visible fast in test mode
+  baseline_window: 3        # Short window so the baseline reacts quickly
+  elevated_ratio: 2.0
+  surge_ratio: 4.0
+  decay_factor: 1.5
+  min_baseline_rate: 0.1
+  fast_escalation: true     # Exercise the probe path in test mode
+  probe_interval_minutes: 1
+  crisis_keywords:
+    - "جنگ"
+    - "موشک"
+    - "war"
+    - "missile"

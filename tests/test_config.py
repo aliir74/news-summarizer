@@ -6,7 +6,13 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import Config, ConfigError, IranFilter, _load_sources_yaml
+from src.config import (
+    AdaptiveCadenceConfig,
+    Config,
+    ConfigError,
+    IranFilter,
+    _load_sources_yaml,
+)
 
 
 class TestConfig:
@@ -125,7 +131,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels:\n  - channel1\n  - channel2\n  - channel3\n")
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2", "channel3"]
         assert rss_feeds == []
@@ -138,7 +144,7 @@ class TestLoadSourcesYaml:
             "telegram_channels:\n  - channel1\n  - channel2\n"
         )
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2"]
 
@@ -147,7 +153,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("")
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert channels == []
         assert rss_feeds == []
@@ -158,7 +164,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("other_key: value\n")
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert channels == []
 
@@ -167,7 +173,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels:\n  - channel1\n  - \n  - channel2\n")
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1", "channel2"]
 
@@ -186,7 +192,7 @@ class TestLoadSourcesYaml:
         channels_file = tmp_path / "channels.yaml"
         channels_file.write_text("channels: not_a_list\n")
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert channels == []
 
@@ -201,7 +207,7 @@ class TestLoadSourcesYaml:
             "    url: https://example.com/feed2.xml\n"
         )
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert len(rss_feeds) == 2
         assert rss_feeds[0].name == "Feed One"
@@ -219,7 +225,7 @@ class TestLoadSourcesYaml:
             "  - url: https://example.com/no-name.xml\n"  # Missing name
         )
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert len(rss_feeds) == 1
         assert rss_feeds[0].name == "Valid Feed"
@@ -235,7 +241,7 @@ class TestLoadSourcesYaml:
             "    - tehran\n"
         )
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert iran_filter.enabled is True
         assert iran_filter.keywords == ["iran", "tehran"]
@@ -248,9 +254,157 @@ class TestLoadSourcesYaml:
             "  enabled: false\n"
         )
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert iran_filter.enabled is False
+
+    def test_load_adaptive_cadence_defaults_when_missing(self, tmp_path: Path) -> None:
+        """Test adaptive_cadence falls back to a disabled default when absent."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text("channels:\n  - channel1\n")
+
+        *_, adaptive_cadence = _load_sources_yaml(channels_file)
+
+        assert isinstance(adaptive_cadence, AdaptiveCadenceConfig)
+        assert adaptive_cadence.enabled is False
+        assert adaptive_cadence.min_interval_minutes == 5
+        assert adaptive_cadence.fast_escalation is False
+
+    def test_load_adaptive_cadence_full(self, tmp_path: Path) -> None:
+        """Test loading a full adaptive_cadence block with custom values."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "adaptive_cadence:\n"
+            "  enabled: true\n"
+            "  min_interval_minutes: 3\n"
+            "  max_interval_minutes: 90\n"
+            "  baseline_window: 6\n"
+            "  elevated_ratio: 1.8\n"
+            "  surge_ratio: 3.5\n"
+            "  decay_factor: 2.0\n"
+            "  min_baseline_rate: 0.25\n"
+            "  fast_escalation: true\n"
+            "  probe_interval_minutes: 2\n"
+            "  crisis_keywords:\n"
+            "    - جنگ\n"
+            "    - war\n"
+        )
+
+        *_, adaptive_cadence = _load_sources_yaml(channels_file)
+
+        assert adaptive_cadence.enabled is True
+        assert adaptive_cadence.min_interval_minutes == 3
+        assert adaptive_cadence.max_interval_minutes == 90
+        assert adaptive_cadence.baseline_window == 6
+        assert adaptive_cadence.elevated_ratio == 1.8
+        assert adaptive_cadence.surge_ratio == 3.5
+        assert adaptive_cadence.decay_factor == 2.0
+        assert adaptive_cadence.min_baseline_rate == 0.25
+        assert adaptive_cadence.fast_escalation is True
+        assert adaptive_cadence.probe_interval_minutes == 2
+        assert adaptive_cadence.crisis_keywords == ["جنگ", "war"]
+
+    def test_load_adaptive_cadence_partial_fallback(self, tmp_path: Path) -> None:
+        """Test a partial adaptive_cadence block falls back per-field."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "adaptive_cadence:\n"
+            "  enabled: true\n"
+            "  surge_ratio: 6.0\n"
+        )
+
+        *_, adaptive_cadence = _load_sources_yaml(channels_file)
+
+        assert adaptive_cadence.enabled is True
+        assert adaptive_cadence.surge_ratio == 6.0
+        # Unspecified fields keep their defaults.
+        assert adaptive_cadence.min_interval_minutes == 5
+        assert adaptive_cadence.elevated_ratio == 2.0
+        assert adaptive_cadence.max_interval_minutes is None
+        assert adaptive_cadence.crisis_keywords  # non-empty default seed
+
+    def test_adaptive_cadence_in_config_from_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test Config.from_env exposes the loaded adaptive_cadence block."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text("adaptive_cadence:\n  enabled: true\n")
+
+        config = Config.from_env(channels_file=channels_file)
+
+        assert config.adaptive_cadence.enabled is True
+
+    def test_config_adaptive_cadence_default_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test adaptive cadence defaults to disabled when no YAML block."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+
+        config = Config.from_env(channels_file=tmp_path / "nonexistent.yaml")
+
+        assert config.adaptive_cadence.enabled is False
+
+    def test_adaptive_cadence_rejects_non_converging_decay(self) -> None:
+        """Test decay_factor <= 1.0 is rejected (would never decay)."""
+        with pytest.raises(ConfigError, match="decay_factor"):
+            AdaptiveCadenceConfig(decay_factor=1.0)
+
+    def test_adaptive_cadence_rejects_zero_min_interval(self) -> None:
+        """Test min_interval_minutes < 1 is rejected."""
+        with pytest.raises(ConfigError, match="min_interval_minutes"):
+            AdaptiveCadenceConfig(min_interval_minutes=0)
+
+    def test_adaptive_cadence_rejects_zero_probe_interval(self) -> None:
+        """Test probe_interval_minutes < 1 is rejected (div-by-zero / bad job)."""
+        with pytest.raises(ConfigError, match="probe_interval_minutes"):
+            AdaptiveCadenceConfig(probe_interval_minutes=0)
+
+    def test_adaptive_cadence_rejects_zero_baseline_window(self) -> None:
+        """Test baseline_window < 1 is rejected (would never trim the window)."""
+        with pytest.raises(ConfigError, match="baseline_window"):
+            AdaptiveCadenceConfig(baseline_window=0)
+
+    def test_invalid_cadence_yaml_propagates_config_error(self, tmp_path: Path) -> None:
+        """Test an invalid adaptive_cadence block raises ConfigError on load."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "adaptive_cadence:\n  enabled: true\n  decay_factor: 1.0\n"
+        )
+
+        with pytest.raises(ConfigError, match="decay_factor"):
+            _load_sources_yaml(channels_file)
+
+    def test_min_interval_exceeding_summary_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test min_interval_minutes > SUMMARY_INTERVAL_MINUTES is rejected."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("SUMMARY_INTERVAL_MINUTES", "10")
+
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "adaptive_cadence:\n  enabled: true\n  min_interval_minutes: 20\n"
+        )
+
+        with pytest.raises(ConfigError, match="cannot exceed"):
+            Config.from_env(channels_file=channels_file)
 
     def test_load_full_config(self, tmp_path: Path) -> None:
         """Test loading full configuration with all sections."""
@@ -267,7 +421,7 @@ class TestLoadSourcesYaml:
             "    - iran\n"
         )
 
-        channels, rss_feeds, iran_filter, _, _ = _load_sources_yaml(channels_file)
+        channels, rss_feeds, iran_filter, _, _, _ = _load_sources_yaml(channels_file)
 
         assert channels == ["channel1"]
         assert len(rss_feeds) == 1
