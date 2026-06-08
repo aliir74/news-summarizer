@@ -67,6 +67,9 @@ htmlcov/
 # Radar state file
 .radar_state
 
+# Adaptive cadence state file
+.cadence_state
+
 # Test mode output
 output/
 
