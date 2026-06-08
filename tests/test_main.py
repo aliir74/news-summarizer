@@ -330,6 +330,32 @@ class TestIntensityProbe:
         # Should not raise even though cadence is disabled.
         await news_summarizer._probe_intensity_job()
 
+    async def test_probe_consumes_radar_flag(self, cadence_config: Config) -> None:
+        """Test the probe resets the radar flag so it cannot sticky-promote."""
+        summarizer = NewsSummarizer(self._fast_config(cadence_config))
+        assert summarizer.cadence_controller is not None
+        summarizer.cadence_controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+        summarizer._recent_radar_alert = True
+
+        with (
+            patch.object(
+                summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[_iran_msg()],
+            ),
+            patch.object(
+                summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(summarizer.scheduler, "reschedule_job"),
+        ):
+            await summarizer._probe_intensity_job()
+
+        assert summarizer._recent_radar_alert is False
+
     async def test_summarize_job_with_messages(
         self, news_summarizer: NewsSummarizer, sample_messages: list, sample_summary: MagicMock
     ) -> None:

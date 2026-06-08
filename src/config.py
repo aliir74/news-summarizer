@@ -79,6 +79,20 @@ class AdaptiveCadenceConfig:
         "missile",
     ])
 
+    def __post_init__(self) -> None:
+        """Validate the cadence knobs so a misconfiguration cannot silently
+        defeat the feature's safety guarantees."""
+        if self.min_interval_minutes < 1:
+            raise ConfigError("adaptive_cadence.min_interval_minutes must be >= 1")
+        if self.probe_interval_minutes < 1:
+            raise ConfigError("adaptive_cadence.probe_interval_minutes must be >= 1")
+        if self.baseline_window < 1:
+            raise ConfigError("adaptive_cadence.baseline_window must be >= 1")
+        # decay_factor must exceed 1.0 or the interval never grows back toward the
+        # baseline after a surge, pinning the bot at min_interval_minutes forever.
+        if self.decay_factor <= 1.0:
+            raise ConfigError("adaptive_cadence.decay_factor must be > 1.0")
+
 
 @dataclass
 class DeduplicationConfig:
@@ -215,6 +229,19 @@ class Config:
         except ValueError as e:
             raise ConfigError("TELEGRAM_API_ID must be an integer") from e
 
+        summary_interval = int(os.getenv("SUMMARY_INTERVAL_MINUTES", "30"))
+        # The surge floor cannot be slower than the steady-state baseline, or
+        # escalation would "speed up" to a longer interval than normal cadence.
+        if (
+            adaptive_cadence.enabled
+            and adaptive_cadence.min_interval_minutes > summary_interval
+        ):
+            raise ConfigError(
+                f"adaptive_cadence.min_interval_minutes "
+                f"({adaptive_cadence.min_interval_minutes}) cannot exceed "
+                f"SUMMARY_INTERVAL_MINUTES ({summary_interval})"
+            )
+
         return cls(
             telegram_api_id=api_id,
             telegram_api_hash=os.environ["TELEGRAM_API_HASH"],
@@ -222,7 +249,7 @@ class Config:
             telegram_bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
             output_channel_id=os.environ["OUTPUT_CHANNEL_ID"],
             openrouter_api_key=os.environ["OPENROUTER_API_KEY"],
-            summary_interval_minutes=int(os.getenv("SUMMARY_INTERVAL_MINUTES", "30")),
+            summary_interval_minutes=summary_interval,
             llm_model=os.getenv("LLM_MODEL", "google/gemini-2.5-flash-lite"),
             two_stage_summarization=os.getenv("TWO_STAGE_SUMMARIZATION", "false").lower() == "true",
             english_llm_model=os.getenv("ENGLISH_LLM_MODEL", "google/gemma-2-9b-it"),

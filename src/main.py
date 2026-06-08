@@ -19,6 +19,7 @@ from src.config import Config, ConfigError
 from src.deduplicator import Deduplicator
 from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
+from src.models import Message
 from src.output_writer import OutputWriter
 from src.rss_reader import RSSReader
 from src.summarizer import Summarizer
@@ -105,7 +106,7 @@ class NewsSummarizer:
         # Load cadence state before the scheduler starts (the first summarize job
         # fires immediately, so the controller must be warm beforehand).
         if self.cadence_controller:
-            self.cadence_controller._load_state()
+            self.cadence_controller.load_state()
 
         # Start clients
         await self.telegram_reader.start()
@@ -188,7 +189,7 @@ class NewsSummarizer:
 
         # Persist cadence state so it survives restarts (systemd on the VPS).
         if self.cadence_controller:
-            self.cadence_controller._save_state()
+            self.cadence_controller.save_state()
 
         # Stop deduplicator if enabled
         if self.config.deduplication.enabled:
@@ -281,7 +282,9 @@ class NewsSummarizer:
         except Exception as e:
             logger.error(f"Error in summarization job: {e}", exc_info=True)
 
-    def _apply_adaptive_cadence(self, filtered_messages: list, since: datetime) -> None:
+    def _apply_adaptive_cadence(
+        self, filtered_messages: list[Message], since: datetime
+    ) -> None:
         """Feed the measured message rate into the cadence controller and reschedule.
 
         Uses the pre-dedup filtered count over the elapsed window so the rate is
@@ -341,8 +344,12 @@ class NewsSummarizer:
             rate = len(filtered) / probe_minutes
             crisis_hit = controller.has_crisis_keyword(filtered)
 
+            # Consume the radar flag here too so a one-shot outage cannot keep
+            # re-promoting on every probe tick; whichever job runs first wins.
+            radar_alert = self._recent_radar_alert
+            self._recent_radar_alert = False
             result = controller.consider_escalation(
-                rate, crisis_hit=crisis_hit, radar_alert=self._recent_radar_alert
+                rate, crisis_hit=crisis_hit, radar_alert=radar_alert
             )
             if result is not None:
                 self.scheduler.reschedule_job(

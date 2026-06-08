@@ -40,6 +40,13 @@ _SEVERITY = {
     IntensityLevel.SURGE: 2,
 }
 
+# One-step promotion table (SURGE is already the ceiling).
+_PROMOTION = {
+    IntensityLevel.NORMAL: IntensityLevel.ELEVATED,
+    IntensityLevel.ELEVATED: IntensityLevel.SURGE,
+    IntensityLevel.SURGE: IntensityLevel.SURGE,
+}
+
 
 class AdaptiveCadenceController:
     """Track recent news intensity and map it to a summary interval."""
@@ -66,6 +73,14 @@ class AdaptiveCadenceController:
     def current_level(self) -> IntensityLevel:
         """Return the current intensity level."""
         return self._current_level
+
+    def load_state(self) -> None:
+        """Public entry point for loading persisted cadence state."""
+        self._load_state()
+
+    def save_state(self) -> None:
+        """Public entry point for persisting cadence state."""
+        self._save_state()
 
     def _load_state(self) -> None:
         """Load the rate window, current interval, and level from file."""
@@ -160,11 +175,7 @@ class AdaptiveCadenceController:
     @staticmethod
     def _promote(level: IntensityLevel) -> IntensityLevel:
         """Bump a level up one step (NORMAL -> ELEVATED -> SURGE)."""
-        if level is IntensityLevel.NORMAL:
-            return IntensityLevel.ELEVATED
-        if level is IntensityLevel.ELEVATED:
-            return IntensityLevel.SURGE
-        return IntensityLevel.SURGE
+        return _PROMOTION[level]
 
     @property
     def _ceiling(self) -> int:
@@ -207,8 +218,12 @@ class AdaptiveCadenceController:
             # Escalate now.
             self._current_interval = target
         else:
-            # Decay gradually toward the target.
-            stepped = round(self._current_interval * self.config.decay_factor)
+            # Decay gradually toward the target. Guarantee at least +1 per run so
+            # rounding can never stall the interval short of the target.
+            stepped = max(
+                self._current_interval + 1,
+                round(self._current_interval * self.config.decay_factor),
+            )
             self._current_interval = min(target, stepped)
 
         self._current_interval = max(
@@ -234,7 +249,8 @@ class AdaptiveCadenceController:
 
         self._current_level = level
         self._current_interval = max(
-            self.config.min_interval_minutes, self._target_interval(level)
+            self.config.min_interval_minutes,
+            min(self._target_interval(level), self._ceiling),
         )
         self._save_state()
         return self._current_interval

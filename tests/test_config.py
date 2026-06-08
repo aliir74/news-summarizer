@@ -356,6 +356,56 @@ class TestLoadSourcesYaml:
 
         assert config.adaptive_cadence.enabled is False
 
+    def test_adaptive_cadence_rejects_non_converging_decay(self) -> None:
+        """Test decay_factor <= 1.0 is rejected (would never decay)."""
+        with pytest.raises(ConfigError, match="decay_factor"):
+            AdaptiveCadenceConfig(decay_factor=1.0)
+
+    def test_adaptive_cadence_rejects_zero_min_interval(self) -> None:
+        """Test min_interval_minutes < 1 is rejected."""
+        with pytest.raises(ConfigError, match="min_interval_minutes"):
+            AdaptiveCadenceConfig(min_interval_minutes=0)
+
+    def test_adaptive_cadence_rejects_zero_probe_interval(self) -> None:
+        """Test probe_interval_minutes < 1 is rejected (div-by-zero / bad job)."""
+        with pytest.raises(ConfigError, match="probe_interval_minutes"):
+            AdaptiveCadenceConfig(probe_interval_minutes=0)
+
+    def test_adaptive_cadence_rejects_zero_baseline_window(self) -> None:
+        """Test baseline_window < 1 is rejected (would never trim the window)."""
+        with pytest.raises(ConfigError, match="baseline_window"):
+            AdaptiveCadenceConfig(baseline_window=0)
+
+    def test_invalid_cadence_yaml_propagates_config_error(self, tmp_path: Path) -> None:
+        """Test an invalid adaptive_cadence block raises ConfigError on load."""
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "adaptive_cadence:\n  enabled: true\n  decay_factor: 1.0\n"
+        )
+
+        with pytest.raises(ConfigError, match="decay_factor"):
+            _load_sources_yaml(channels_file)
+
+    def test_min_interval_exceeding_summary_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test min_interval_minutes > SUMMARY_INTERVAL_MINUTES is rejected."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("SUMMARY_INTERVAL_MINUTES", "10")
+
+        channels_file = tmp_path / "channels.yaml"
+        channels_file.write_text(
+            "adaptive_cadence:\n  enabled: true\n  min_interval_minutes: 20\n"
+        )
+
+        with pytest.raises(ConfigError, match="cannot exceed"):
+            Config.from_env(channels_file=channels_file)
+
     def test_load_full_config(self, tmp_path: Path) -> None:
         """Test loading full configuration with all sections."""
         channels_file = tmp_path / "channels.yaml"
