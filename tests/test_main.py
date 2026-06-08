@@ -60,6 +60,47 @@ class TestNewsSummarizer:
             await news_summarizer.stop()
             assert news_summarizer._running is False
 
+
+class TestCadenceLifecycle:
+    """Tests for the adaptive cadence controller lifecycle in NewsSummarizer."""
+
+    def test_controller_created_when_enabled(self, cadence_config: Config) -> None:
+        """Test the controller is created when adaptive cadence is enabled."""
+        summarizer = NewsSummarizer(cadence_config)
+
+        assert summarizer.cadence_controller is not None
+
+    def test_controller_none_when_disabled(self, news_summarizer: NewsSummarizer) -> None:
+        """Test the controller stays None when adaptive cadence is disabled."""
+        assert news_summarizer.cadence_controller is None
+
+    def test_recent_radar_alert_defaults_false(
+        self, news_summarizer: NewsSummarizer
+    ) -> None:
+        """Test the recent-radar-alert flag starts False."""
+        assert news_summarizer._recent_radar_alert is False
+
+    async def test_start_loads_and_stop_saves_state(self, cadence_config: Config) -> None:
+        """Test start() loads cadence state and stop() saves it."""
+        summarizer = NewsSummarizer(cadence_config)
+        assert summarizer.cadence_controller is not None
+
+        with (
+            patch.object(summarizer.telegram_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "start", new_callable=AsyncMock),
+            patch.object(summarizer.telegram_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.cadence_controller, "_load_state") as mock_load,
+            patch.object(summarizer.cadence_controller, "_save_state") as mock_save,
+        ):
+            await summarizer.start()
+            mock_load.assert_called_once()
+
+            await summarizer.stop()
+            mock_save.assert_called_once()
+
     async def test_summarize_job_with_messages(
         self, news_summarizer: NewsSummarizer, sample_messages: list, sample_summary: MagicMock
     ) -> None:

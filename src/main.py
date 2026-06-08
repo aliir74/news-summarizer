@@ -12,6 +12,7 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.bale_bot import BaleBot
+from src.cadence import AdaptiveCadenceController
 from src.cloudflare_radar import CloudflareRadarMonitor
 from src.composite_writer import CompositeOutputWriter
 from src.config import Config, ConfigError
@@ -72,6 +73,14 @@ class NewsSummarizer:
         self._seen_urls: set[str] = set()
         self._running = False
 
+        # Adaptive cadence controller (optional). Tracks the recent radar alert
+        # state so the controller can treat an internet outage as a crisis signal.
+        self._recent_radar_alert = False
+        self.cadence_controller: AdaptiveCadenceController | None = None
+        if config.adaptive_cadence.enabled:
+            self.cadence_controller = AdaptiveCadenceController(config)
+            logger.info("Adaptive cadence enabled")
+
         # Cloudflare Radar monitor (optional)
         self.radar_monitor: CloudflareRadarMonitor | None = None
         if config.radar_monitor.enabled and config.cloudflare_api_token:
@@ -92,6 +101,11 @@ class NewsSummarizer:
         # Load last check timestamp and seen URLs
         self._load_last_check()
         self._load_seen_urls()
+
+        # Load cadence state before the scheduler starts (the first summarize job
+        # fires immediately, so the controller must be warm beforehand).
+        if self.cadence_controller:
+            self.cadence_controller._load_state()
 
         # Start clients
         await self.telegram_reader.start()
@@ -156,6 +170,10 @@ class NewsSummarizer:
         # Save last check timestamp and seen URLs
         self._save_last_check()
         self._save_seen_urls()
+
+        # Persist cadence state so it survives restarts (systemd on the VPS).
+        if self.cadence_controller:
+            self.cadence_controller._save_state()
 
         # Stop deduplicator if enabled
         if self.config.deduplication.enabled:
@@ -261,7 +279,11 @@ class NewsSummarizer:
                 else:
                     logger.error(f"Failed to post radar alert: {alert.alert_type.value}")
 
-            if not alerts:
+            if alerts:
+                # An internet outage is a likely crisis signal; surface it to the
+                # cadence controller on the next summarize run.
+                self._recent_radar_alert = True
+            else:
                 logger.info("No radar alerts to send")
 
         except Exception as e:
