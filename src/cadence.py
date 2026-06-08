@@ -165,3 +165,76 @@ class AdaptiveCadenceController:
         if level is IntensityLevel.ELEVATED:
             return IntensityLevel.SURGE
         return IntensityLevel.SURGE
+
+    @property
+    def _ceiling(self) -> int:
+        """Return the slowest allowed interval.
+
+        Defaults to the baseline; max_interval_minutes can raise it so quiet
+        periods may optionally run slower than the baseline.
+        """
+        max_interval = self.config.max_interval_minutes
+        if max_interval is not None and max_interval > self._baseline_interval:
+            return max_interval
+        return self._baseline_interval
+
+    def _target_interval(self, level: IntensityLevel) -> int:
+        """Map an intensity level to its target interval in minutes."""
+        if level is IntensityLevel.SURGE:
+            return self.config.min_interval_minutes
+        if level is IntensityLevel.ELEVATED:
+            return max(round(self._baseline_interval / 2), self.config.min_interval_minutes)
+        return self._ceiling
+
+    def record_and_compute(
+        self, rate: float, *, crisis_hit: bool = False, radar_alert: bool = False
+    ) -> int:
+        """Record a measured rate and return the next summary interval.
+
+        Escalation is immediate (snap to the shorter target); decay is gradual
+        (step the interval up by decay_factor each calm run, never overshooting
+        the ceiling). The level is computed over the existing window BEFORE the
+        new rate is appended so a spike does not damp its own surge signal.
+        """
+        level = self._compute_level(rate, crisis_hit=crisis_hit, radar_alert=radar_alert)
+
+        self._rate_window.append(rate)
+        if len(self._rate_window) > self.config.baseline_window:
+            self._rate_window = self._rate_window[-self.config.baseline_window :]
+
+        target = self._target_interval(level)
+        if target < self._current_interval:
+            # Escalate now.
+            self._current_interval = target
+        else:
+            # Decay gradually toward the target.
+            stepped = round(self._current_interval * self.config.decay_factor)
+            self._current_interval = min(target, stepped)
+
+        self._current_interval = max(
+            self.config.min_interval_minutes, min(self._current_interval, self._ceiling)
+        )
+        self._current_level = level
+        self._save_state()
+        return self._current_interval
+
+    def consider_escalation(
+        self, rate: float, *, crisis_hit: bool = False, radar_alert: bool = False
+    ) -> int | None:
+        """Escalate-only check for the cheap probe between summary runs.
+
+        Returns the shorter interval when the computed level is higher than the
+        current level; otherwise returns None and leaves state untouched. It
+        never decays and never appends to the baseline window, so the noisy
+        short-window probe sample cannot pollute the baseline or relax cadence.
+        """
+        level = self._compute_level(rate, crisis_hit=crisis_hit, radar_alert=radar_alert)
+        if level.severity <= self._current_level.severity:
+            return None
+
+        self._current_level = level
+        self._current_interval = max(
+            self.config.min_interval_minutes, self._target_interval(level)
+        )
+        self._save_state()
+        return self._current_interval

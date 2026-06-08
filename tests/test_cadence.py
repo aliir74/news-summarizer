@@ -234,3 +234,161 @@ class TestHasCrisisKeyword:
         controller.config.crisis_keywords = []
 
         assert controller.has_crisis_keyword([_msg("war missile جنگ")]) is False
+
+
+class TestRecordAndCompute:
+    """Tests for the full record_and_compute escalate/decay path."""
+
+    def _seed_baseline(self, controller: AdaptiveCadenceController) -> None:
+        """Seed a baseline rate of 1.0 messages per minute."""
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+    def test_escalates_immediately_to_surge(self, cadence_config: Config) -> None:
+        """Test a surge-level rate snaps straight to the floor interval."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        result = controller.record_and_compute(4.0)
+
+        assert result == 5  # min_interval_minutes
+        assert controller.current_interval == 5
+        assert controller.current_level == IntensityLevel.SURGE
+
+    def test_escalates_to_elevated_half_interval(self, cadence_config: Config) -> None:
+        """Test an elevated rate snaps to roughly half the baseline interval."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        result = controller.record_and_compute(2.0)  # ratio 2.0 => ELEVATED
+
+        assert result == 15  # round(30 / 2)
+        assert controller.current_level == IntensityLevel.ELEVATED
+
+    def test_returns_int(self, cadence_config: Config) -> None:
+        """Test the returned interval is an int (APScheduler minutes)."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        result = controller.record_and_compute(4.0)
+
+        assert isinstance(result, int)
+
+    def test_decays_gradually_without_overshoot(self, cadence_config: Config) -> None:
+        """Test calming grows the interval step by step, capped at baseline."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        intervals = [controller.record_and_compute(1.0) for _ in range(6)]
+
+        # Strictly increasing toward the baseline, never overshooting it.
+        assert intervals[0] == 8  # round(5 * 1.5)
+        assert all(a <= b for a, b in zip(intervals, intervals[1:], strict=False))
+        assert max(intervals) == 30  # baseline ceiling
+        assert all(i <= 30 for i in intervals)
+
+    def test_never_below_min_interval(self, cadence_config: Config) -> None:
+        """Test the interval floor is honored."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        for _ in range(5):
+            result = controller.record_and_compute(100.0)  # sustained surge
+            assert result >= 5
+
+    def test_appends_and_trims_window(self, cadence_config: Config) -> None:
+        """Test each call appends a rate and trims to baseline_window."""
+        controller = AdaptiveCadenceController(cadence_config)  # baseline_window=5
+
+        for _ in range(7):
+            controller.record_and_compute(1.0)
+
+        assert len(controller._rate_window) == 5
+
+    def test_max_interval_ceiling(self, cadence_config: Config) -> None:
+        """Test decay can climb above baseline up to max_interval_minutes."""
+        controller = AdaptiveCadenceController(cadence_config)
+        controller.config.max_interval_minutes = 60
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        intervals = [controller.record_and_compute(1.0) for _ in range(12)]
+
+        assert max(intervals) == 60
+        assert all(i <= 60 for i in intervals)
+
+    def test_state_saved_on_each_call(
+        self, cadence_config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test record_and_compute persists state."""
+        state_file = tmp_path / ".cadence_state"
+        monkeypatch.setattr("src.cadence.CADENCE_STATE_FILE", state_file)
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        controller.record_and_compute(4.0)
+
+        assert state_file.exists()
+
+
+class TestConsiderEscalation:
+    """Tests for the escalate-only probe path."""
+
+    def _seed_baseline(self, controller: AdaptiveCadenceController) -> None:
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+    def test_escalates_when_level_rises(self, cadence_config: Config) -> None:
+        """Test a higher level returns a shorter interval and updates state."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        result = controller.consider_escalation(4.0, crisis_hit=False, radar_alert=False)
+
+        assert result == 5
+        assert controller.current_interval == 5
+        assert controller.current_level == IntensityLevel.SURGE
+
+    def test_returns_none_when_no_escalation(self, cadence_config: Config) -> None:
+        """Test a non-rising level returns None and leaves state untouched."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        result = controller.consider_escalation(1.0, crisis_hit=False, radar_alert=False)
+
+        assert result is None
+        assert controller.current_interval == 30
+        assert controller.current_level == IntensityLevel.NORMAL
+
+    def test_never_decays(self, cadence_config: Config) -> None:
+        """Test the probe never relaxes an already-tightened cadence."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        result = controller.consider_escalation(1.0, crisis_hit=False, radar_alert=False)
+
+        assert result is None
+        assert controller.current_interval == 5  # not relaxed
+
+    def test_does_not_append_to_window(self, cadence_config: Config) -> None:
+        """Test the probe does not pollute the baseline window."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        before = list(controller._rate_window)
+
+        controller.consider_escalation(4.0, crisis_hit=False, radar_alert=False)
+
+        assert controller._rate_window == before
+
+    def test_crisis_escalates(self, cadence_config: Config) -> None:
+        """Test a crisis hit escalates to SURGE via the probe."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        result = controller.consider_escalation(0.1, crisis_hit=True, radar_alert=False)
+
+        assert result == 5
+        assert controller.current_level == IntensityLevel.SURGE
