@@ -190,6 +190,146 @@ class TestCadenceInSummarizeJob:
 
         assert summarizer._recent_radar_alert is False
 
+
+class TestIntensityProbe:
+    """Tests for the escalate-only intensity probe job."""
+
+    def _fast_config(self, cadence_config: Config) -> Config:
+        """Return a cadence config with fast_escalation enabled."""
+        cfg = replace(cadence_config)
+        cfg.adaptive_cadence.fast_escalation = True
+        cfg.adaptive_cadence.probe_interval_minutes = 5
+        return cfg
+
+    async def test_probe_job_scheduled_when_fast_escalation(
+        self, cadence_config: Config
+    ) -> None:
+        """Test start() adds the probe job when fast_escalation is on."""
+        summarizer = NewsSummarizer(self._fast_config(cadence_config))
+        with (
+            patch.object(summarizer.telegram_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "start", new_callable=AsyncMock),
+            patch.object(summarizer.telegram_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "stop", new_callable=AsyncMock),
+        ):
+            await summarizer.start()
+            job = summarizer.scheduler.get_job("probe_intensity")
+            await summarizer.stop()
+
+        assert job is not None
+
+    async def test_probe_job_absent_when_disabled(self, cadence_config: Config) -> None:
+        """Test no probe job is added when fast_escalation is off."""
+        summarizer = NewsSummarizer(cadence_config)  # fast_escalation defaults off
+        with (
+            patch.object(summarizer.telegram_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "start", new_callable=AsyncMock),
+            patch.object(summarizer.telegram_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "stop", new_callable=AsyncMock),
+        ):
+            await summarizer.start()
+            job = summarizer.scheduler.get_job("probe_intensity")
+            await summarizer.stop()
+
+        assert job is None
+
+    async def test_probe_escalates_reschedules(self, cadence_config: Config) -> None:
+        """Test the probe reschedules the summarize job to a shorter interval."""
+        summarizer = NewsSummarizer(self._fast_config(cadence_config))
+        assert summarizer.cadence_controller is not None
+        summarizer.cadence_controller._rate_window = [0.1, 0.1, 0.1, 0.1, 0.1]
+
+        with (
+            patch.object(
+                summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[_iran_msg() for _ in range(50)],
+            ),
+            patch.object(
+                summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(summarizer.scheduler, "reschedule_job") as mock_reschedule,
+            patch.object(summarizer.scheduler, "modify_job") as mock_modify,
+        ):
+            await summarizer._probe_intensity_job()
+
+        mock_reschedule.assert_called_once()
+        assert mock_reschedule.call_args.kwargs["minutes"] < 30
+        mock_modify.assert_not_called()  # no crisis keyword => no immediate fire
+
+    async def test_probe_crisis_fires_immediate_catchup(
+        self, cadence_config: Config
+    ) -> None:
+        """Test a crisis keyword triggers an immediate catch-up via modify_job."""
+        summarizer = NewsSummarizer(self._fast_config(cadence_config))
+        assert summarizer.cadence_controller is not None
+        summarizer.cadence_controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+        with (
+            patch.object(
+                summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[_iran_msg("جنگ در ایران آغاز شد")],
+            ),
+            patch.object(
+                summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(summarizer.scheduler, "reschedule_job"),
+            patch.object(summarizer.scheduler, "modify_job") as mock_modify,
+        ):
+            await summarizer._probe_intensity_job()
+
+        mock_modify.assert_called_once()
+
+    async def test_probe_is_side_effect_free(self, cadence_config: Config) -> None:
+        """Test the probe does not mutate seen URLs or advance last_check."""
+        summarizer = NewsSummarizer(self._fast_config(cadence_config))
+        assert summarizer.cadence_controller is not None
+        summarizer._seen_urls = {"https://kept.example/1"}
+        summarizer._last_check = None
+
+        with (
+            patch.object(
+                summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[_iran_msg()],
+            ),
+            patch.object(
+                summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_rss,
+            patch.object(summarizer.scheduler, "reschedule_job"),
+        ):
+            await summarizer._probe_intensity_job()
+
+        # Real seen-URL set is untouched and last_check is not advanced.
+        assert summarizer._seen_urls == {"https://kept.example/1"}
+        assert summarizer._last_check is None
+        # The probe passed a throwaway empty seen_urls set to the RSS reader.
+        assert mock_rss.call_args.kwargs.get("seen_urls") == set()
+
+    async def test_probe_noop_without_controller(
+        self, news_summarizer: NewsSummarizer
+    ) -> None:
+        """Test the probe is a no-op when no controller is configured."""
+        # Should not raise even though cadence is disabled.
+        await news_summarizer._probe_intensity_job()
+
     async def test_summarize_job_with_messages(
         self, news_summarizer: NewsSummarizer, sample_messages: list, sample_summary: MagicMock
     ) -> None:
