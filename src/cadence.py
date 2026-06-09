@@ -8,12 +8,10 @@ surge breaks out and decays gradually back toward the baseline as things calm.
 import json
 import logging
 import statistics
-from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
 
 from src.config import Config
-from src.models import Message
 
 logger = logging.getLogger(__name__)
 
@@ -116,22 +114,6 @@ class AdaptiveCadenceController:
         except OSError as e:
             logger.warning(f"Could not save cadence state: {e}")
 
-    def has_crisis_keyword(self, messages: Iterable[Message]) -> bool:
-        """Return True if any message text contains a configured crisis keyword.
-
-        Matching is case-insensitive substring matching. An empty keyword list
-        never matches.
-        """
-        keywords = self.config.crisis_keywords
-        if not keywords:
-            return False
-        lowered = [kw.lower() for kw in keywords]
-        for message in messages:
-            text = message.text.lower()
-            if any(kw in text for kw in lowered):
-                return True
-        return False
-
     def _baseline(self) -> float:
         """Return the baseline rate: median of the window, floored.
 
@@ -143,14 +125,11 @@ class AdaptiveCadenceController:
             return floor
         return max(statistics.median(self._rate_window), floor)
 
-    def _compute_level(
-        self, rate: float, *, crisis_hit: bool, radar_alert: bool
-    ) -> IntensityLevel:
-        """Map a message rate (plus signals) to an intensity level.
+    def _compute_level(self, rate: float, *, radar_alert: bool) -> IntensityLevel:
+        """Map a message rate (plus the radar signal) to an intensity level.
 
-        Ordering matters: the volume-ratio mapping runs first, then a radar
-        outage promotes one level, then a crisis keyword hard-sets SURGE last so
-        it can never be downgraded.
+        The volume-ratio mapping runs first, then a radar outage promotes the
+        level one step.
         """
         # With no baseline history we cannot judge a surge from volume alone.
         if self._rate_window:
@@ -166,9 +145,6 @@ class AdaptiveCadenceController:
 
         if radar_alert:
             level = self._promote(level)
-
-        if crisis_hit:
-            level = IntensityLevel.SURGE
 
         return level
 
@@ -197,9 +173,7 @@ class AdaptiveCadenceController:
             return max(round(self._baseline_interval / 2), self.config.min_interval_minutes)
         return self._ceiling
 
-    def record_and_compute(
-        self, rate: float, *, crisis_hit: bool = False, radar_alert: bool = False
-    ) -> int:
+    def record_and_compute(self, rate: float, *, radar_alert: bool = False) -> int:
         """Record a measured rate and return the next summary interval.
 
         Escalation is immediate (snap to the shorter target); decay is gradual
@@ -207,7 +181,7 @@ class AdaptiveCadenceController:
         the ceiling). The level is computed over the existing window BEFORE the
         new rate is appended so a spike does not damp its own surge signal.
         """
-        level = self._compute_level(rate, crisis_hit=crisis_hit, radar_alert=radar_alert)
+        level = self._compute_level(rate, radar_alert=radar_alert)
 
         self._rate_window.append(rate)
         if len(self._rate_window) > self.config.baseline_window:
@@ -233,9 +207,7 @@ class AdaptiveCadenceController:
         self._save_state()
         return self._current_interval
 
-    def consider_escalation(
-        self, rate: float, *, crisis_hit: bool = False, radar_alert: bool = False
-    ) -> int | None:
+    def consider_escalation(self, rate: float, *, radar_alert: bool = False) -> int | None:
         """Escalate-only check for the cheap probe between summary runs.
 
         Returns the shorter interval when the computed level is higher than the
@@ -243,7 +215,7 @@ class AdaptiveCadenceController:
         never decays and never appends to the baseline window, so the noisy
         short-window probe sample cannot pollute the baseline or relax cadence.
         """
-        level = self._compute_level(rate, crisis_hit=crisis_hit, radar_alert=radar_alert)
+        level = self._compute_level(rate, radar_alert=radar_alert)
         if level.severity <= self._current_level.severity:
             return None
 

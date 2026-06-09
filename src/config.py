@@ -68,16 +68,6 @@ class AdaptiveCadenceConfig:
     min_baseline_rate: float = 0.1  # Floor for the baseline rate (messages per minute)
     fast_escalation: bool = False  # Run the cheap escalation probe between summary runs
     probe_interval_minutes: int = 5  # Probe cadence when fast_escalation is on
-    crisis_keywords: list[str] = field(default_factory=lambda: [
-        "جنگ",
-        "حمله",
-        "موشک",
-        "حمله هوایی",
-        "war",
-        "strike",
-        "attack",
-        "missile",
-    ])
 
     def __post_init__(self) -> None:
         """Validate the cadence knobs so a misconfiguration cannot silently
@@ -356,12 +346,6 @@ def _load_sources_yaml(
             defaults = AdaptiveCadenceConfig()
             raw_max = raw_cadence.get("max_interval_minutes", defaults.max_interval_minutes)
             max_interval = int(raw_max) if raw_max is not None else None
-            raw_keywords = raw_cadence.get("crisis_keywords")
-            crisis_keywords = (
-                [str(k) for k in raw_keywords if k is not None]
-                if isinstance(raw_keywords, list)
-                else defaults.crisis_keywords
-            )
             adaptive_cadence = AdaptiveCadenceConfig(
                 enabled=bool(raw_cadence.get("enabled", defaults.enabled)),
                 min_interval_minutes=int(
@@ -385,7 +369,6 @@ def _load_sources_yaml(
                 probe_interval_minutes=int(
                     raw_cadence.get("probe_interval_minutes", defaults.probe_interval_minutes)
                 ),
-                crisis_keywords=crisis_keywords,
             )
 
         return channels, rss_feeds, iran_filter, radar_monitor, deduplication, adaptive_cadence

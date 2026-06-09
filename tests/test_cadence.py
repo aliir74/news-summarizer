@@ -1,24 +1,11 @@
 """Tests for the adaptive cadence controller."""
 
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from src.cadence import AdaptiveCadenceController, IntensityLevel
 from src.config import Config
-from src.models import Message
-
-
-def _msg(text: str) -> Message:
-    """Build a minimal Message with the given text."""
-    return Message(
-        id=1,
-        channel_username="ch",
-        channel_title="Ch",
-        text=text,
-        timestamp=datetime(2024, 1, 15, 10, 0),
-    )
 
 
 class TestIntensityLevel:
@@ -135,7 +122,7 @@ class TestComputeLevel:
         """Test no baseline history means NORMAL regardless of the rate."""
         controller = AdaptiveCadenceController(cadence_config)
 
-        level = controller._compute_level(10.0, crisis_hit=False, radar_alert=False)
+        level = controller._compute_level(10.0, radar_alert=False)
 
         assert level == IntensityLevel.NORMAL
 
@@ -144,7 +131,7 @@ class TestComputeLevel:
         controller = AdaptiveCadenceController(cadence_config)
         controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]  # baseline 1.0
 
-        level = controller._compute_level(4.0, crisis_hit=False, radar_alert=False)
+        level = controller._compute_level(4.0, radar_alert=False)
 
         assert level == IntensityLevel.SURGE
 
@@ -153,14 +140,8 @@ class TestComputeLevel:
         controller = AdaptiveCadenceController(cadence_config)
         controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]  # baseline 1.0
 
-        assert (
-            controller._compute_level(2.0, crisis_hit=False, radar_alert=False)
-            == IntensityLevel.ELEVATED
-        )
-        assert (
-            controller._compute_level(1.0, crisis_hit=False, radar_alert=False)
-            == IntensityLevel.NORMAL
-        )
+        assert controller._compute_level(2.0, radar_alert=False) == IntensityLevel.ELEVATED
+        assert controller._compute_level(1.0, radar_alert=False) == IntensityLevel.NORMAL
 
     def test_floor_prevents_trickle_surge(self, cadence_config: Config) -> None:
         """Test a trickle against a near-zero history does not surge (floor)."""
@@ -168,18 +149,23 @@ class TestComputeLevel:
         controller._rate_window = [0.0, 0.0, 0.0]  # baseline floored to 0.1
 
         # 0.2 / 0.1 = 2.0 => ELEVATED, not SURGE.
-        level = controller._compute_level(0.2, crisis_hit=False, radar_alert=False)
+        level = controller._compute_level(0.2, radar_alert=False)
 
         assert level == IntensityLevel.ELEVATED
 
-    def test_crisis_keyword_forces_surge(self, cadence_config: Config) -> None:
-        """Test a crisis hit forces SURGE even at a normal rate."""
+    def test_low_rate_never_surges_regardless_of_text(self, cadence_config: Config) -> None:
+        """Regression: a trickle (0.05/min) must never read as SURGE.
+
+        War vocabulary is the steady state of these sources; only volume vs the
+        baseline (plus radar) may escalate. The VPS false-surge bug was a single
+        keyword hit pinning SURGE at 0.01-0.06 msg/min.
+        """
         controller = AdaptiveCadenceController(cadence_config)
-        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+        controller._rate_window = [0.05, 0.05, 0.05, 0.05, 0.05]
 
-        level = controller._compute_level(0.1, crisis_hit=True, radar_alert=False)
+        level = controller._compute_level(0.05, radar_alert=False)
 
-        assert level == IntensityLevel.SURGE
+        assert level == IntensityLevel.NORMAL
 
     def test_radar_promotes_one_level(self, cadence_config: Config) -> None:
         """Test a radar outage flag bumps the level up by one step."""
@@ -187,53 +173,9 @@ class TestComputeLevel:
         controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
 
         # NORMAL rate + radar => ELEVATED.
-        assert (
-            controller._compute_level(1.0, crisis_hit=False, radar_alert=True)
-            == IntensityLevel.ELEVATED
-        )
+        assert controller._compute_level(1.0, radar_alert=True) == IntensityLevel.ELEVATED
         # ELEVATED rate + radar => SURGE.
-        assert (
-            controller._compute_level(2.0, crisis_hit=False, radar_alert=True)
-            == IntensityLevel.SURGE
-        )
-
-    def test_crisis_not_downgraded_by_radar_ordering(self, cadence_config: Config) -> None:
-        """Test crisis SURGE is never downgraded when radar also fires."""
-        controller = AdaptiveCadenceController(cadence_config)
-        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
-
-        level = controller._compute_level(0.1, crisis_hit=True, radar_alert=True)
-
-        assert level == IntensityLevel.SURGE
-
-
-class TestHasCrisisKeyword:
-    """Tests for crisis keyword detection."""
-
-    def test_detects_persian_keyword(self, cadence_config: Config) -> None:
-        """Test a Persian crisis keyword is detected."""
-        controller = AdaptiveCadenceController(cadence_config)
-
-        assert controller.has_crisis_keyword([_msg("خبر فوری: جنگ آغاز شد")]) is True
-
-    def test_detects_english_case_insensitive(self, cadence_config: Config) -> None:
-        """Test English keywords match case-insensitively."""
-        controller = AdaptiveCadenceController(cadence_config)
-
-        assert controller.has_crisis_keyword([_msg("Breaking: WAR declared")]) is True
-
-    def test_no_keyword_returns_false(self, cadence_config: Config) -> None:
-        """Test benign messages do not trigger a crisis hit."""
-        controller = AdaptiveCadenceController(cadence_config)
-
-        assert controller.has_crisis_keyword([_msg("Weather is sunny today")]) is False
-
-    def test_empty_keyword_list_never_matches(self, cadence_config: Config) -> None:
-        """Test an empty crisis_keywords list never matches."""
-        controller = AdaptiveCadenceController(cadence_config)
-        controller.config.crisis_keywords = []
-
-        assert controller.has_crisis_keyword([_msg("war missile جنگ")]) is False
+        assert controller._compute_level(2.0, radar_alert=True) == IntensityLevel.SURGE
 
 
 class TestRecordAndCompute:
@@ -344,7 +286,7 @@ class TestConsiderEscalation:
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.consider_escalation(4.0, crisis_hit=False, radar_alert=False)
+        result = controller.consider_escalation(4.0, radar_alert=False)
 
         assert result == 5
         assert controller.current_interval == 5
@@ -355,7 +297,7 @@ class TestConsiderEscalation:
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.consider_escalation(1.0, crisis_hit=False, radar_alert=False)
+        result = controller.consider_escalation(1.0, radar_alert=False)
 
         assert result is None
         assert controller.current_interval == 30
@@ -368,7 +310,7 @@ class TestConsiderEscalation:
         controller._current_interval = 5
         controller._current_level = IntensityLevel.SURGE
 
-        result = controller.consider_escalation(1.0, crisis_hit=False, radar_alert=False)
+        result = controller.consider_escalation(1.0, radar_alert=False)
 
         assert result is None
         assert controller.current_interval == 5  # not relaxed
@@ -379,16 +321,16 @@ class TestConsiderEscalation:
         self._seed_baseline(controller)
         before = list(controller._rate_window)
 
-        controller.consider_escalation(4.0, crisis_hit=False, radar_alert=False)
+        controller.consider_escalation(4.0, radar_alert=False)
 
         assert controller._rate_window == before
 
-    def test_crisis_escalates(self, cadence_config: Config) -> None:
-        """Test a crisis hit escalates to SURGE via the probe."""
+    def test_radar_escalates(self, cadence_config: Config) -> None:
+        """Test a radar outage promotes the level via the probe."""
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.consider_escalation(0.1, crisis_hit=True, radar_alert=False)
+        result = controller.consider_escalation(1.0, radar_alert=True)
 
-        assert result == 5
-        assert controller.current_level == IntensityLevel.SURGE
+        assert result == 15  # ELEVATED => half the 30min baseline
+        assert controller.current_level == IntensityLevel.ELEVATED
