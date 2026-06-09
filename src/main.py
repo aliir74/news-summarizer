@@ -298,11 +298,10 @@ class NewsSummarizer:
 
         elapsed_minutes = max((datetime.now() - since).total_seconds() / 60, 0.5)
         rate = len(filtered_messages) / elapsed_minutes
-        crisis_hit = controller.has_crisis_keyword(filtered_messages)
 
         previous_interval = controller.current_interval
         next_interval = controller.record_and_compute(
-            rate, crisis_hit=crisis_hit, radar_alert=self._recent_radar_alert
+            rate, radar_alert=self._recent_radar_alert
         )
         self._recent_radar_alert = False
 
@@ -342,15 +341,12 @@ class NewsSummarizer:
             ) + self.iran_filter.filter_messages(rss_messages)
 
             rate = len(filtered) / probe_minutes
-            crisis_hit = controller.has_crisis_keyword(filtered)
 
             # Consume the radar flag here too so a one-shot outage cannot keep
             # re-promoting on every probe tick; whichever job runs first wins.
             radar_alert = self._recent_radar_alert
             self._recent_radar_alert = False
-            result = controller.consider_escalation(
-                rate, crisis_hit=crisis_hit, radar_alert=radar_alert
-            )
+            result = controller.consider_escalation(rate, radar_alert=radar_alert)
             if result is not None:
                 self.scheduler.reschedule_job(
                     "summarize_news", trigger="interval", minutes=result
@@ -359,12 +355,6 @@ class NewsSummarizer:
                     f"Probe escalated cadence to {result}min "
                     f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
                 )
-                if crisis_hit:
-                    # A crisis just broke; post a catch-up summary immediately.
-                    self.scheduler.modify_job(
-                        "summarize_news", next_run_time=datetime.now()
-                    )
-                    logger.info("Probe triggered an immediate catch-up summary")
 
         except Exception as e:
             logger.error(f"Error in intensity probe job: {e}", exc_info=True)

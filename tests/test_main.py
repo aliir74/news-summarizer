@@ -166,8 +166,12 @@ class TestCadenceInSummarizeJob:
 
         mock_reschedule.assert_not_called()
 
-    async def test_crisis_keyword_forces_shortest(self, cadence_config: Config) -> None:
-        """Test a crisis keyword reschedules straight to the floor interval."""
+    async def test_war_vocabulary_alone_never_escalates(self, cadence_config: Config) -> None:
+        """Regression: war vocabulary at a low rate must not touch the cadence.
+
+        The VPS false-surge bug was a single keyword hit forcing SURGE at
+        0.01-0.06 msg/min; only volume vs baseline may escalate now.
+        """
         summarizer = NewsSummarizer(cadence_config)
         assert summarizer.cadence_controller is not None
         summarizer.cadence_controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
@@ -176,8 +180,7 @@ class TestCadenceInSummarizeJob:
             summarizer, [_iran_msg("جنگ در ایران آغاز شد")]
         )
 
-        mock_reschedule.assert_called_once()
-        assert mock_reschedule.call_args.kwargs["minutes"] == 5  # min_interval_minutes
+        mock_reschedule.assert_not_called()
 
     async def test_radar_flag_consumed(self, cadence_config: Config) -> None:
         """Test the recent-radar-alert flag is reset after one summarize run."""
@@ -263,22 +266,23 @@ class TestIntensityProbe:
 
         mock_reschedule.assert_called_once()
         assert mock_reschedule.call_args.kwargs["minutes"] < 30
-        mock_modify.assert_not_called()  # no crisis keyword => no immediate fire
+        mock_modify.assert_not_called()  # probe only reschedules, never fires early
 
-    async def test_probe_crisis_fires_immediate_catchup(
+    async def test_probe_never_fires_immediate_catchup(
         self, cadence_config: Config
     ) -> None:
-        """Test a crisis keyword triggers an immediate catch-up via modify_job."""
+        """Test the probe never triggers an immediate catch-up, even on war vocab."""
         summarizer = NewsSummarizer(self._fast_config(cadence_config))
         assert summarizer.cadence_controller is not None
-        summarizer.cadence_controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+        # Low baseline so the burst escalates; texts carry war vocabulary.
+        summarizer.cadence_controller._rate_window = [0.1, 0.1, 0.1, 0.1, 0.1]
 
         with (
             patch.object(
                 summarizer.telegram_reader,
                 "get_all_channel_updates",
                 new_callable=AsyncMock,
-                return_value=[_iran_msg("جنگ در ایران آغاز شد")],
+                return_value=[_iran_msg("جنگ در ایران آغاز شد") for _ in range(50)],
             ),
             patch.object(
                 summarizer.rss_reader,
@@ -286,12 +290,13 @@ class TestIntensityProbe:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            patch.object(summarizer.scheduler, "reschedule_job"),
+            patch.object(summarizer.scheduler, "reschedule_job") as mock_reschedule,
             patch.object(summarizer.scheduler, "modify_job") as mock_modify,
         ):
             await summarizer._probe_intensity_job()
 
-        mock_modify.assert_called_once()
+        mock_reschedule.assert_called_once()  # escalation still happens
+        mock_modify.assert_not_called()  # but no immediate catch-up post
 
     async def test_probe_is_side_effect_free(self, cadence_config: Config) -> None:
         """Test the probe does not mutate seen URLs or advance last_check."""
