@@ -299,18 +299,16 @@ class NewsSummarizer:
         elapsed_minutes = max((datetime.now() - since).total_seconds() / 60, 0.5)
         rate = len(filtered_messages) / elapsed_minutes
 
-        previous_interval = controller.current_interval
-        next_interval = controller.record_and_compute(
-            rate, radar_alert=self._recent_radar_alert
-        )
+        decision = controller.record_and_compute(rate, radar_alert=self._recent_radar_alert)
         self._recent_radar_alert = False
 
-        if next_interval != previous_interval:
+        if decision.changed:
             self.scheduler.reschedule_job(
-                "summarize_news", trigger="interval", minutes=next_interval
+                "summarize_news", trigger="interval", minutes=decision.new_interval
             )
             logger.info(
-                f"Adaptive cadence: {previous_interval}min -> {next_interval}min "
+                f"Adaptive cadence: {decision.previous_interval}min -> "
+                f"{decision.new_interval}min "
                 f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
             )
 
@@ -346,13 +344,13 @@ class NewsSummarizer:
             # re-promoting on every probe tick; whichever job runs first wins.
             radar_alert = self._recent_radar_alert
             self._recent_radar_alert = False
-            result = controller.consider_escalation(rate, radar_alert=radar_alert)
-            if result is not None:
+            decision = controller.consider_escalation(rate, radar_alert=radar_alert)
+            if decision.changed:
                 self.scheduler.reschedule_job(
-                    "summarize_news", trigger="interval", minutes=result
+                    "summarize_news", trigger="interval", minutes=decision.new_interval
                 )
                 logger.info(
-                    f"Probe escalated cadence to {result}min "
+                    f"Probe escalated cadence to {decision.new_interval}min "
                     f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
                 )
 

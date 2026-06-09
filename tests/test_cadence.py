@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from src.cadence import AdaptiveCadenceController, IntensityLevel
+from src.cadence import (
+    AdaptiveCadenceController,
+    CadenceChangeReason,
+    CadenceDecision,
+    IntensityLevel,
+)
 from src.config import Config
 
 
@@ -190,9 +195,9 @@ class TestRecordAndCompute:
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.record_and_compute(4.0)
+        decision = controller.record_and_compute(4.0)
 
-        assert result == 5  # min_interval_minutes
+        assert decision.new_interval == 5  # min_interval_minutes
         assert controller.current_interval == 5
         assert controller.current_level == IntensityLevel.SURGE
 
@@ -201,19 +206,20 @@ class TestRecordAndCompute:
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.record_and_compute(2.0)  # ratio 2.0 => ELEVATED
+        decision = controller.record_and_compute(2.0)  # ratio 2.0 => ELEVATED
 
-        assert result == 15  # round(30 / 2)
+        assert decision.new_interval == 15  # round(30 / 2)
         assert controller.current_level == IntensityLevel.ELEVATED
 
-    def test_returns_int(self, cadence_config: Config) -> None:
-        """Test the returned interval is an int (APScheduler minutes)."""
+    def test_returns_decision_with_int_interval(self, cadence_config: Config) -> None:
+        """Test the decision carries an int interval (APScheduler minutes)."""
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.record_and_compute(4.0)
+        decision = controller.record_and_compute(4.0)
 
-        assert isinstance(result, int)
+        assert isinstance(decision, CadenceDecision)
+        assert isinstance(decision.new_interval, int)
 
     def test_decays_gradually_without_overshoot(self, cadence_config: Config) -> None:
         """Test calming grows the interval step by step, capped at baseline."""
@@ -222,7 +228,7 @@ class TestRecordAndCompute:
         controller._current_interval = 5
         controller._current_level = IntensityLevel.SURGE
 
-        intervals = [controller.record_and_compute(1.0) for _ in range(6)]
+        intervals = [controller.record_and_compute(1.0).new_interval for _ in range(6)]
 
         # Strictly increasing toward the baseline, never overshooting it.
         assert intervals[0] == 8  # round(5 * 1.5)
@@ -236,8 +242,8 @@ class TestRecordAndCompute:
         self._seed_baseline(controller)
 
         for _ in range(5):
-            result = controller.record_and_compute(100.0)  # sustained surge
-            assert result >= 5
+            decision = controller.record_and_compute(100.0)  # sustained surge
+            assert decision.new_interval >= 5
 
     def test_appends_and_trims_window(self, cadence_config: Config) -> None:
         """Test each call appends a rate and trims to baseline_window."""
@@ -256,7 +262,7 @@ class TestRecordAndCompute:
         controller._current_interval = 5
         controller._current_level = IntensityLevel.SURGE
 
-        intervals = [controller.record_and_compute(1.0) for _ in range(12)]
+        intervals = [controller.record_and_compute(1.0).new_interval for _ in range(12)]
 
         assert max(intervals) == 60
         assert all(i <= 60 for i in intervals)
@@ -275,6 +281,72 @@ class TestRecordAndCompute:
         assert state_file.exists()
 
 
+class TestCadenceDecisionReasons:
+    """Tests for the change reason attached to each CadenceDecision."""
+
+    def _seed_baseline(self, controller: AdaptiveCadenceController) -> None:
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+    def test_volume_escalation_reason(self, cadence_config: Config) -> None:
+        """Test escalation driven by the volume ratio cites NEWS_VOLUME."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        decision = controller.record_and_compute(4.0)
+
+        assert decision.changed is True
+        assert decision.reason == CadenceChangeReason.NEWS_VOLUME
+        assert decision.previous_interval == 30
+        assert decision.new_interval == 5
+
+    def test_radar_decisive_escalation_reason(self, cadence_config: Config) -> None:
+        """Test escalation where the radar promotion was decisive cites RADAR_OUTAGE."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        # Rate 1.0 is NORMAL on its own; only the radar promotion escalates.
+        decision = controller.record_and_compute(1.0, radar_alert=True)
+
+        assert decision.changed is True
+        assert decision.reason == CadenceChangeReason.RADAR_OUTAGE
+        assert decision.level == IntensityLevel.ELEVATED
+
+    def test_volume_escalation_with_radar_still_news_volume(
+        self, cadence_config: Config
+    ) -> None:
+        """Test a rate already at SURGE cites NEWS_VOLUME even if radar also fired."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        # 4.0 is SURGE by volume alone; the radar promotion changes nothing.
+        decision = controller.record_and_compute(4.0, radar_alert=True)
+
+        assert decision.reason == CadenceChangeReason.NEWS_VOLUME
+
+    def test_decay_reason(self, cadence_config: Config) -> None:
+        """Test a decay step cites CALM_DECAY."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        decision = controller.record_and_compute(1.0)
+
+        assert decision.changed is True
+        assert decision.reason == CadenceChangeReason.CALM_DECAY
+        assert decision.new_interval > decision.previous_interval
+
+    def test_unchanged_interval_has_no_reason(self, cadence_config: Config) -> None:
+        """Test an unchanged interval yields changed False and no reason."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        decision = controller.record_and_compute(1.0)  # NORMAL at baseline interval
+
+        assert decision.changed is False
+        assert decision.reason is None
+
+
 class TestConsiderEscalation:
     """Tests for the escalate-only probe path."""
 
@@ -286,20 +358,23 @@ class TestConsiderEscalation:
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.consider_escalation(4.0, radar_alert=False)
+        decision = controller.consider_escalation(4.0, radar_alert=False)
 
-        assert result == 5
+        assert decision.changed is True
+        assert decision.new_interval == 5
+        assert decision.reason == CadenceChangeReason.NEWS_VOLUME
         assert controller.current_interval == 5
         assert controller.current_level == IntensityLevel.SURGE
 
-    def test_returns_none_when_no_escalation(self, cadence_config: Config) -> None:
-        """Test a non-rising level returns None and leaves state untouched."""
+    def test_non_changed_decision_when_no_escalation(self, cadence_config: Config) -> None:
+        """Test a non-rising level returns a non-changed decision, state untouched."""
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.consider_escalation(1.0, radar_alert=False)
+        decision = controller.consider_escalation(1.0, radar_alert=False)
 
-        assert result is None
+        assert decision.changed is False
+        assert decision.reason is None
         assert controller.current_interval == 30
         assert controller.current_level == IntensityLevel.NORMAL
 
@@ -310,9 +385,9 @@ class TestConsiderEscalation:
         controller._current_interval = 5
         controller._current_level = IntensityLevel.SURGE
 
-        result = controller.consider_escalation(1.0, radar_alert=False)
+        decision = controller.consider_escalation(1.0, radar_alert=False)
 
-        assert result is None
+        assert decision.changed is False
         assert controller.current_interval == 5  # not relaxed
 
     def test_does_not_append_to_window(self, cadence_config: Config) -> None:
@@ -330,7 +405,9 @@ class TestConsiderEscalation:
         controller = AdaptiveCadenceController(cadence_config)
         self._seed_baseline(controller)
 
-        result = controller.consider_escalation(1.0, radar_alert=True)
+        decision = controller.consider_escalation(1.0, radar_alert=True)
 
-        assert result == 15  # ELEVATED => half the 30min baseline
+        assert decision.changed is True
+        assert decision.new_interval == 15  # ELEVATED => half the 30min baseline
+        assert decision.reason == CadenceChangeReason.RADAR_OUTAGE
         assert controller.current_level == IntensityLevel.ELEVATED
