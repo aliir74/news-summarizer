@@ -21,8 +21,8 @@ TEST_MODE=true uv run python -m src.main
 # Run tests
 uv run pytest
 
-# Run tests with coverage (CI requires 80% minimum)
-uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=80
+# Run tests with coverage (CI requires 90% minimum)
+uv run pytest --cov=src --cov-report=term-missing --cov-fail-under=90
 
 # Lint
 uv run ruff check src tests
