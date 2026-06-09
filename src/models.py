@@ -8,9 +8,17 @@ from zoneinfo import ZoneInfo
 
 import jdatetime
 
+from src.cadence import CadenceChangeReason, CadenceDecision
 from src.message_utils import format_html_links
 
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+
+PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+
+
+def to_persian_digits(n: int | str) -> str:
+    """Convert an integer or digit string to a Persian digit string."""
+    return "".join(PERSIAN_DIGITS[int(d)] for d in str(n))
 
 
 class SourceType(Enum):
@@ -88,8 +96,7 @@ class Summary:
     @staticmethod
     def _to_persian_digits(n: int | str) -> str:
         """Convert integer or digit string to Persian digit string."""
-        persian_digits = "۰۱۲۳۴۵۶۷۸۹"
-        return "".join(persian_digits[int(d)] for d in str(n))
+        return to_persian_digits(n)
 
     def format_message(self, *, html: bool = True) -> str:
         """Format the summary for posting to messaging platforms.
@@ -117,6 +124,36 @@ class Summary:
 
         body = format_html_links(self.content) if html else self.content
         return header + body + footer
+
+
+# Persian phrasing for each cadence-change reason.
+_CADENCE_REASON_PHRASES = {
+    CadenceChangeReason.NEWS_VOLUME: "افزایش حجم اخبار",
+    CadenceChangeReason.RADAR_OUTAGE: "اختلال اینترنت در ایران",
+    CadenceChangeReason.CALM_DECAY: "آرام‌تر شدن جریان اخبار",
+}
+
+
+def build_cadence_notice(decision: CadenceDecision) -> str:
+    """Build the Persian notice explaining why the summary cadence changed.
+
+    Plain text (no HTML) so it is safe through every post_alert path; every
+    variant names the next-summary wait time so readers know what to expect.
+    """
+    if not decision.changed or decision.reason is None:
+        raise ValueError("A cadence notice requires a changed decision with a reason")
+
+    escalated = decision.new_interval < decision.previous_interval
+    emoji = "⚡️" if escalated else "🕊"
+    direction = "کاهش" if escalated else "افزایش"
+    previous = to_persian_digits(decision.previous_interval)
+    new = to_persian_digits(decision.new_interval)
+    reason_phrase = _CADENCE_REASON_PHRASES[decision.reason]
+    return (
+        f"{emoji} به دلیل {reason_phrase}، فاصله ارسال خلاصه‌ها "
+        f"از {previous} به {new} دقیقه {direction} یافت.\n"
+        f"خلاصه بعدی حدود {new} دقیقه دیگر ارسال می‌شود."
+    )
 
 
 # Cloudflare Radar monitoring models

@@ -29,8 +29,3 @@ adaptive_cadence:
   min_baseline_rate: 0.1
   fast_escalation: true     # Exercise the probe path in test mode
   probe_interval_minutes: 1
-  crisis_keywords:
-    - "جنگ"
-    - "موشک"
-    - "war"
-    - "missile"

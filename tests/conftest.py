@@ -219,7 +219,6 @@ def cadence_config(sample_config: Config) -> Config:
             surge_ratio=4.0,
             decay_factor=1.5,
             min_baseline_rate=0.1,
-            crisis_keywords=["جنگ", "موشک", "war", "missile"],
         ),
     )
 

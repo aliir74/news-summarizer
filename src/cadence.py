@@ -8,12 +8,11 @@ surge breaks out and decays gradually back toward the baseline as things calm.
 import json
 import logging
 import statistics
-from collections.abc import Iterable
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from src.config import Config
-from src.models import Message
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +45,29 @@ _PROMOTION = {
     IntensityLevel.ELEVATED: IntensityLevel.SURGE,
     IntensityLevel.SURGE: IntensityLevel.SURGE,
 }
+
+
+class CadenceChangeReason(str, Enum):
+    """Why the summary interval changed."""
+
+    NEWS_VOLUME = "NEWS_VOLUME"
+    RADAR_OUTAGE = "RADAR_OUTAGE"
+    CALM_DECAY = "CALM_DECAY"
+
+
+@dataclass(frozen=True)
+class CadenceDecision:
+    """Outcome of one cadence evaluation, including why the interval moved."""
+
+    previous_interval: int
+    new_interval: int
+    level: IntensityLevel
+    reason: CadenceChangeReason | None
+
+    @property
+    def changed(self) -> bool:
+        """Return True when the interval actually moved."""
+        return self.new_interval != self.previous_interval
 
 
 class AdaptiveCadenceController:
@@ -116,22 +138,6 @@ class AdaptiveCadenceController:
         except OSError as e:
             logger.warning(f"Could not save cadence state: {e}")
 
-    def has_crisis_keyword(self, messages: Iterable[Message]) -> bool:
-        """Return True if any message text contains a configured crisis keyword.
-
-        Matching is case-insensitive substring matching. An empty keyword list
-        never matches.
-        """
-        keywords = self.config.crisis_keywords
-        if not keywords:
-            return False
-        lowered = [kw.lower() for kw in keywords]
-        for message in messages:
-            text = message.text.lower()
-            if any(kw in text for kw in lowered):
-                return True
-        return False
-
     def _baseline(self) -> float:
         """Return the baseline rate: median of the window, floored.
 
@@ -143,33 +149,27 @@ class AdaptiveCadenceController:
             return floor
         return max(statistics.median(self._rate_window), floor)
 
-    def _compute_level(
-        self, rate: float, *, crisis_hit: bool, radar_alert: bool
-    ) -> IntensityLevel:
-        """Map a message rate (plus signals) to an intensity level.
-
-        Ordering matters: the volume-ratio mapping runs first, then a radar
-        outage promotes one level, then a crisis keyword hard-sets SURGE last so
-        it can never be downgraded.
-        """
+    def _volume_level(self, rate: float) -> IntensityLevel:
+        """Map a message rate to an intensity level from the volume ratio alone."""
         # With no baseline history we cannot judge a surge from volume alone.
-        if self._rate_window:
-            ratio = rate / self._baseline()
-            if ratio >= self.config.surge_ratio:
-                level = IntensityLevel.SURGE
-            elif ratio >= self.config.elevated_ratio:
-                level = IntensityLevel.ELEVATED
-            else:
-                level = IntensityLevel.NORMAL
-        else:
-            level = IntensityLevel.NORMAL
+        if not self._rate_window:
+            return IntensityLevel.NORMAL
+        ratio = rate / self._baseline()
+        if ratio >= self.config.surge_ratio:
+            return IntensityLevel.SURGE
+        if ratio >= self.config.elevated_ratio:
+            return IntensityLevel.ELEVATED
+        return IntensityLevel.NORMAL
 
+    def _compute_level(self, rate: float, *, radar_alert: bool) -> IntensityLevel:
+        """Map a message rate (plus the radar signal) to an intensity level.
+
+        The volume-ratio mapping runs first, then a radar outage promotes the
+        level one step.
+        """
+        level = self._volume_level(rate)
         if radar_alert:
             level = self._promote(level)
-
-        if crisis_hit:
-            level = IntensityLevel.SURGE
-
         return level
 
     @staticmethod
@@ -197,22 +197,38 @@ class AdaptiveCadenceController:
             return max(round(self._baseline_interval / 2), self.config.min_interval_minutes)
         return self._ceiling
 
+    @staticmethod
+    def _change_reason(
+        previous_interval: int, new_interval: int, *, radar_promoted: bool
+    ) -> CadenceChangeReason | None:
+        """Attribute an interval change to its driving signal."""
+        if new_interval < previous_interval:
+            if radar_promoted:
+                return CadenceChangeReason.RADAR_OUTAGE
+            return CadenceChangeReason.NEWS_VOLUME
+        if new_interval > previous_interval:
+            return CadenceChangeReason.CALM_DECAY
+        return None
+
     def record_and_compute(
-        self, rate: float, *, crisis_hit: bool = False, radar_alert: bool = False
-    ) -> int:
-        """Record a measured rate and return the next summary interval.
+        self, rate: float, *, radar_alert: bool = False
+    ) -> CadenceDecision:
+        """Record a measured rate and decide the next summary interval.
 
         Escalation is immediate (snap to the shorter target); decay is gradual
         (step the interval up by decay_factor each calm run, never overshooting
         the ceiling). The level is computed over the existing window BEFORE the
         new rate is appended so a spike does not damp its own surge signal.
         """
-        level = self._compute_level(rate, crisis_hit=crisis_hit, radar_alert=radar_alert)
+        volume_level = self._volume_level(rate)
+        level = self._promote(volume_level) if radar_alert else volume_level
+        radar_promoted = level is not volume_level
 
         self._rate_window.append(rate)
         if len(self._rate_window) > self.config.baseline_window:
             self._rate_window = self._rate_window[-self.config.baseline_window :]
 
+        previous_interval = self._current_interval
         target = self._target_interval(level)
         if target < self._current_interval:
             # Escalate now.
@@ -231,21 +247,38 @@ class AdaptiveCadenceController:
         )
         self._current_level = level
         self._save_state()
-        return self._current_interval
+        return CadenceDecision(
+            previous_interval=previous_interval,
+            new_interval=self._current_interval,
+            level=level,
+            reason=self._change_reason(
+                previous_interval, self._current_interval, radar_promoted=radar_promoted
+            ),
+        )
 
     def consider_escalation(
-        self, rate: float, *, crisis_hit: bool = False, radar_alert: bool = False
-    ) -> int | None:
+        self, rate: float, *, radar_alert: bool = False
+    ) -> CadenceDecision:
         """Escalate-only check for the cheap probe between summary runs.
 
-        Returns the shorter interval when the computed level is higher than the
-        current level; otherwise returns None and leaves state untouched. It
-        never decays and never appends to the baseline window, so the noisy
-        short-window probe sample cannot pollute the baseline or relax cadence.
+        Returns a changed decision when the computed level is higher than the
+        current level; otherwise returns a non-changed decision and leaves state
+        untouched. It never decays and never appends to the baseline window, so
+        the noisy short-window probe sample cannot pollute the baseline or relax
+        cadence.
         """
-        level = self._compute_level(rate, crisis_hit=crisis_hit, radar_alert=radar_alert)
+        volume_level = self._volume_level(rate)
+        level = self._promote(volume_level) if radar_alert else volume_level
+        radar_promoted = level is not volume_level
+
+        previous_interval = self._current_interval
         if level.severity <= self._current_level.severity:
-            return None
+            return CadenceDecision(
+                previous_interval=previous_interval,
+                new_interval=previous_interval,
+                level=self._current_level,
+                reason=None,
+            )
 
         self._current_level = level
         self._current_interval = max(
@@ -253,4 +286,11 @@ class AdaptiveCadenceController:
             min(self._target_interval(level), self._ceiling),
         )
         self._save_state()
-        return self._current_interval
+        return CadenceDecision(
+            previous_interval=previous_interval,
+            new_interval=self._current_interval,
+            level=level,
+            reason=self._change_reason(
+                previous_interval, self._current_interval, radar_promoted=radar_promoted
+            ),
+        )

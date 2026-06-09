@@ -91,7 +91,12 @@ class BaleBot:
             return False
 
     async def post_alert(self, alert_text: str) -> bool:
-        """Post an alert message to the Bale channel."""
+        """Post an alert message to the Bale channel.
+
+        Alerts are time-sensitive (outage alerts, cadence-change notices), so a
+        failed post is dropped rather than queued: a late alert is misleading,
+        and queueing would mix alerts into the summary re_summarize condensation.
+        """
         try:
             messages = split_message(alert_text)
 
@@ -102,8 +107,7 @@ class BaleBot:
             return True
 
         except Exception as e:
-            logger.error(f"Error posting alert to Bale: {e}")
-            self._enqueue(alert_text)
+            logger.error(f"Error posting alert to Bale (dropped, not queued): {e}")
             return False
 
     def _enqueue(self, text: str) -> None:

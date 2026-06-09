@@ -2,13 +2,18 @@
 
 from datetime import datetime
 
+import pytest
+
+from src.cadence import CadenceChangeReason, CadenceDecision, IntensityLevel
 from src.models import (
     TEHRAN_TZ,
     Message,
     SourceInfo,
     SourceType,
     Summary,
+    build_cadence_notice,
     extract_domain,
+    to_persian_digits,
 )
 
 
@@ -286,3 +291,94 @@ class TestMessageSourceType:
             source_type=SourceType.RSS,
         )
         assert msg.source_type == SourceType.RSS
+
+
+class TestToPersianDigits:
+    """Tests for the module-level Persian digit converter."""
+
+    def test_converts_int(self) -> None:
+        """Test an integer converts to Persian digits."""
+        assert to_persian_digits(68) == "۶۸"
+
+    def test_converts_digit_string(self) -> None:
+        """Test a digit string converts to Persian digits."""
+        assert to_persian_digits("05") == "۰۵"
+
+
+class TestBuildCadenceNotice:
+    """Tests for the Persian cadence-change notice builder."""
+
+    def _decision(
+        self,
+        previous: int,
+        new: int,
+        reason: CadenceChangeReason,
+        level: IntensityLevel = IntensityLevel.ELEVATED,
+    ) -> CadenceDecision:
+        return CadenceDecision(
+            previous_interval=previous, new_interval=new, level=level, reason=reason
+        )
+
+    def test_news_volume_escalation(self) -> None:
+        """Test the news-volume variant cites the rise and both intervals."""
+        notice = build_cadence_notice(
+            self._decision(68, 30, CadenceChangeReason.NEWS_VOLUME)
+        )
+
+        assert "افزایش حجم اخبار" in notice
+        assert "۶۸" in notice
+        assert "۳۰" in notice
+        assert "کاهش" in notice
+
+    def test_radar_outage_escalation(self) -> None:
+        """Test the radar variant cites internet disruption in Iran."""
+        notice = build_cadence_notice(
+            self._decision(60, 30, CadenceChangeReason.RADAR_OUTAGE)
+        )
+
+        assert "اختلال اینترنت" in notice
+        assert "ایران" in notice
+        assert "۶۰" in notice
+        assert "۳۰" in notice
+
+    def test_calm_decay(self) -> None:
+        """Test the decay variant cites the calmer flow and the longer wait."""
+        notice = build_cadence_notice(
+            self._decision(30, 45, CadenceChangeReason.CALM_DECAY, IntensityLevel.NORMAL)
+        )
+
+        assert "آرام" in notice
+        assert "۳۰" in notice
+        assert "۴۵" in notice
+        assert "افزایش" in notice
+
+    def test_every_variant_names_next_wait_time(self) -> None:
+        """Test each variant tells readers when to expect the next summary."""
+        for reason, new in [
+            (CadenceChangeReason.NEWS_VOLUME, 30),
+            (CadenceChangeReason.RADAR_OUTAGE, 15),
+            (CadenceChangeReason.CALM_DECAY, 45),
+        ]:
+            notice = build_cadence_notice(self._decision(60, new, reason))
+            assert "خلاصه بعدی" in notice
+            assert to_persian_digits(new) in notice
+
+    def test_no_html_unsafe_characters(self) -> None:
+        """Test the notice is safe to post through the HTML alert path."""
+        for reason in CadenceChangeReason:
+            notice = build_cadence_notice(self._decision(60, 30, reason))
+            assert "<" not in notice
+            assert ">" not in notice
+            assert "&" not in notice
+
+    def test_unchanged_decision_rejected(self) -> None:
+        """Test building a notice for a non-changed decision is an error."""
+        decision = CadenceDecision(
+            previous_interval=30,
+            new_interval=30,
+            level=IntensityLevel.NORMAL,
+            reason=None,
+        )
+
+        with pytest.raises(ValueError):
+            build_cadence_notice(decision)

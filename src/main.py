@@ -12,14 +12,14 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.bale_bot import BaleBot
-from src.cadence import AdaptiveCadenceController
+from src.cadence import AdaptiveCadenceController, CadenceDecision
 from src.cloudflare_radar import CloudflareRadarMonitor
 from src.composite_writer import CompositeOutputWriter
 from src.config import Config, ConfigError
 from src.deduplicator import Deduplicator
 from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
-from src.models import Message
+from src.models import Message, build_cadence_notice
 from src.output_writer import OutputWriter
 from src.rss_reader import RSSReader
 from src.summarizer import Summarizer
@@ -241,7 +241,7 @@ class NewsSummarizer:
             logger.info(f"Total {len(messages)} messages before deduplication")
 
             # Adapt the summary cadence from the pre-dedup filtered message rate.
-            self._apply_adaptive_cadence(messages, since)
+            cadence_decision = self._apply_adaptive_cadence(messages, since)
 
             # Apply deduplication if enabled
             if self.config.deduplication.enabled and messages:
@@ -269,6 +269,11 @@ class NewsSummarizer:
             else:
                 logger.info("No new messages to summarize")
 
+            # Tell subscribers why the rhythm changed (in Persian), after the
+            # summary so the notice never lands ahead of the news itself.
+            if cadence_decision is not None and cadence_decision.changed:
+                await self._post_cadence_notice(cadence_decision)
+
             # Add new RSS article URLs to seen set (for deduplication)
             for msg in filtered_rss:
                 if msg.url:
@@ -284,36 +289,44 @@ class NewsSummarizer:
 
     def _apply_adaptive_cadence(
         self, filtered_messages: list[Message], since: datetime
-    ) -> None:
+    ) -> CadenceDecision | None:
         """Feed the measured message rate into the cadence controller and reschedule.
 
         Uses the pre-dedup filtered count over the elapsed window so the rate is
         independent of the current interval and not coupled to the LLM dedup
         pipeline. Reschedules the summarize job only when the interval changes;
-        the change takes effect from the next fire, not the current run.
+        the change takes effect from the next fire, not the current run. Returns
+        the decision so the caller can announce the change to subscribers.
         """
         controller = self.cadence_controller
         if controller is None:
-            return
+            return None
 
         elapsed_minutes = max((datetime.now() - since).total_seconds() / 60, 0.5)
         rate = len(filtered_messages) / elapsed_minutes
-        crisis_hit = controller.has_crisis_keyword(filtered_messages)
 
-        previous_interval = controller.current_interval
-        next_interval = controller.record_and_compute(
-            rate, crisis_hit=crisis_hit, radar_alert=self._recent_radar_alert
-        )
+        decision = controller.record_and_compute(rate, radar_alert=self._recent_radar_alert)
         self._recent_radar_alert = False
 
-        if next_interval != previous_interval:
+        if decision.changed:
             self.scheduler.reschedule_job(
-                "summarize_news", trigger="interval", minutes=next_interval
+                "summarize_news", trigger="interval", minutes=decision.new_interval
             )
             logger.info(
-                f"Adaptive cadence: {previous_interval}min -> {next_interval}min "
+                f"Adaptive cadence: {decision.previous_interval}min -> "
+                f"{decision.new_interval}min "
                 f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
             )
+        return decision
+
+    async def _post_cadence_notice(self, decision: CadenceDecision) -> None:
+        """Post the Persian cadence-change notice to all output channels."""
+        notice = build_cadence_notice(decision)
+        success = await self.output_writer.post_alert(notice)
+        if success:
+            logger.info(f"Posted cadence notice ({decision.reason})")
+        else:
+            logger.error("Failed to post cadence notice")
 
     async def _probe_intensity_job(self) -> None:
         """Cheap escalate-only probe to bound cold-start detection latency.
@@ -342,29 +355,21 @@ class NewsSummarizer:
             ) + self.iran_filter.filter_messages(rss_messages)
 
             rate = len(filtered) / probe_minutes
-            crisis_hit = controller.has_crisis_keyword(filtered)
 
             # Consume the radar flag here too so a one-shot outage cannot keep
             # re-promoting on every probe tick; whichever job runs first wins.
             radar_alert = self._recent_radar_alert
             self._recent_radar_alert = False
-            result = controller.consider_escalation(
-                rate, crisis_hit=crisis_hit, radar_alert=radar_alert
-            )
-            if result is not None:
+            decision = controller.consider_escalation(rate, radar_alert=radar_alert)
+            if decision.changed:
                 self.scheduler.reschedule_job(
-                    "summarize_news", trigger="interval", minutes=result
+                    "summarize_news", trigger="interval", minutes=decision.new_interval
                 )
                 logger.info(
-                    f"Probe escalated cadence to {result}min "
+                    f"Probe escalated cadence to {decision.new_interval}min "
                     f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
                 )
-                if crisis_hit:
-                    # A crisis just broke; post a catch-up summary immediately.
-                    self.scheduler.modify_job(
-                        "summarize_news", next_run_time=datetime.now()
-                    )
-                    logger.info("Probe triggered an immediate catch-up summary")
+                await self._post_cadence_notice(decision)
 
         except Exception as e:
             logger.error(f"Error in intensity probe job: {e}", exc_info=True)

@@ -285,9 +285,6 @@ class TestLoadSourcesYaml:
             "  min_baseline_rate: 0.25\n"
             "  fast_escalation: true\n"
             "  probe_interval_minutes: 2\n"
-            "  crisis_keywords:\n"
-            "    - جنگ\n"
-            "    - war\n"
         )
 
         *_, adaptive_cadence = _load_sources_yaml(channels_file)
@@ -302,7 +299,6 @@ class TestLoadSourcesYaml:
         assert adaptive_cadence.min_baseline_rate == 0.25
         assert adaptive_cadence.fast_escalation is True
         assert adaptive_cadence.probe_interval_minutes == 2
-        assert adaptive_cadence.crisis_keywords == ["جنگ", "war"]
 
     def test_load_adaptive_cadence_partial_fallback(self, tmp_path: Path) -> None:
         """Test a partial adaptive_cadence block falls back per-field."""
@@ -321,7 +317,6 @@ class TestLoadSourcesYaml:
         assert adaptive_cadence.min_interval_minutes == 5
         assert adaptive_cadence.elevated_ratio == 2.0
         assert adaptive_cadence.max_interval_minutes is None
-        assert adaptive_cadence.crisis_keywords  # non-empty default seed
 
     def test_adaptive_cadence_in_config_from_env(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

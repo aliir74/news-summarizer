@@ -205,10 +205,15 @@ class TestBaleBotRetryQueue:
             assert queue_file.exists()
             await bot.stop()
 
-    async def test_enqueue_on_post_alert_failure(
+    async def test_no_enqueue_on_post_alert_failure(
         self, bot: BaleBot, tmp_path: MagicMock
     ) -> None:
-        """Test that failed post_alert enqueues the message."""
+        """Test a failed post_alert is dropped, never queued for retry.
+
+        Alerts (radar outages, cadence notices) are time-sensitive: delivering
+        them late is misleading, and queueing them would pollute the summary
+        retry queue's re_summarize condensation.
+        """
         queue_file = tmp_path / "bale_retry_queue"
         with patch("src.bale_bot.BALE_QUEUE_FILE", queue_file):
             await bot.start()
@@ -218,10 +223,10 @@ class TestBaleBotRetryQueue:
                 new_callable=AsyncMock,
                 side_effect=Exception("Network error"),
             ):
-                await bot.post_alert("Test alert")
+                result = await bot.post_alert("Test alert")
 
-            assert len(bot._queue) == 1
-            assert bot._queue[0]["text"] == "Test alert"
+            assert result is False
+            assert len(bot._queue) == 0
             await bot.stop()
 
     async def test_no_enqueue_on_success(
