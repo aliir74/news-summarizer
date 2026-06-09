@@ -59,8 +59,10 @@ deduplication:
 # Reflective adaptive summary cadence (disabled by default).
 # When enabled, the summary interval shortens as news intensity rises (a surge)
 # and decays back toward SUMMARY_INTERVAL_MINUTES as things calm. Intensity is a
-# pre-dedup filtered message RATE (messages per minute), so it is independent of
-# the current interval.
+# pre-dedup filtered message RATE (messages per minute) judged against the
+# rolling median baseline; a Cloudflare Radar outage promotes one level. Every
+# interval change posts a Persian notice (reason + old-to-new interval) to the
+# output channels.
 adaptive_cadence:
   enabled: true            # Master switch; keep false to preserve fixed cadence
   min_interval_minutes: 30  # Floor cadence during a surge (vs 6h baseline)
