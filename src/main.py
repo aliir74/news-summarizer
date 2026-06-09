@@ -12,14 +12,14 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.bale_bot import BaleBot
-from src.cadence import AdaptiveCadenceController
+from src.cadence import AdaptiveCadenceController, CadenceDecision
 from src.cloudflare_radar import CloudflareRadarMonitor
 from src.composite_writer import CompositeOutputWriter
 from src.config import Config, ConfigError
 from src.deduplicator import Deduplicator
 from src.file_writer import FileWriter
 from src.iran_filter import IranRelevanceFilter
-from src.models import Message
+from src.models import Message, build_cadence_notice
 from src.output_writer import OutputWriter
 from src.rss_reader import RSSReader
 from src.summarizer import Summarizer
@@ -241,7 +241,7 @@ class NewsSummarizer:
             logger.info(f"Total {len(messages)} messages before deduplication")
 
             # Adapt the summary cadence from the pre-dedup filtered message rate.
-            self._apply_adaptive_cadence(messages, since)
+            cadence_decision = self._apply_adaptive_cadence(messages, since)
 
             # Apply deduplication if enabled
             if self.config.deduplication.enabled and messages:
@@ -269,6 +269,11 @@ class NewsSummarizer:
             else:
                 logger.info("No new messages to summarize")
 
+            # Tell subscribers why the rhythm changed (in Persian), after the
+            # summary so the notice never lands ahead of the news itself.
+            if cadence_decision is not None and cadence_decision.changed:
+                await self._post_cadence_notice(cadence_decision)
+
             # Add new RSS article URLs to seen set (for deduplication)
             for msg in filtered_rss:
                 if msg.url:
@@ -284,17 +289,18 @@ class NewsSummarizer:
 
     def _apply_adaptive_cadence(
         self, filtered_messages: list[Message], since: datetime
-    ) -> None:
+    ) -> CadenceDecision | None:
         """Feed the measured message rate into the cadence controller and reschedule.
 
         Uses the pre-dedup filtered count over the elapsed window so the rate is
         independent of the current interval and not coupled to the LLM dedup
         pipeline. Reschedules the summarize job only when the interval changes;
-        the change takes effect from the next fire, not the current run.
+        the change takes effect from the next fire, not the current run. Returns
+        the decision so the caller can announce the change to subscribers.
         """
         controller = self.cadence_controller
         if controller is None:
-            return
+            return None
 
         elapsed_minutes = max((datetime.now() - since).total_seconds() / 60, 0.5)
         rate = len(filtered_messages) / elapsed_minutes
@@ -311,6 +317,16 @@ class NewsSummarizer:
                 f"{decision.new_interval}min "
                 f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
             )
+        return decision
+
+    async def _post_cadence_notice(self, decision: CadenceDecision) -> None:
+        """Post the Persian cadence-change notice to all output channels."""
+        notice = build_cadence_notice(decision)
+        success = await self.output_writer.post_alert(notice)
+        if success:
+            logger.info(f"Posted cadence notice ({decision.reason})")
+        else:
+            logger.error("Failed to post cadence notice")
 
     async def _probe_intensity_job(self) -> None:
         """Cheap escalate-only probe to bound cold-start detection latency.
@@ -353,6 +369,7 @@ class NewsSummarizer:
                     f"Probe escalated cadence to {decision.new_interval}min "
                     f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
                 )
+                await self._post_cadence_notice(decision)
 
         except Exception as e:
             logger.error(f"Error in intensity probe job: {e}", exc_info=True)
