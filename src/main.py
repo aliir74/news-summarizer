@@ -342,8 +342,12 @@ class NewsSummarizer:
             return
 
         try:
-            probe_minutes = self.config.adaptive_cadence.probe_interval_minutes
-            since = datetime.now() - timedelta(minutes=probe_minutes)
+            # Average the rate over a trailing window decoupled from how often
+            # the probe runs. A window wider than the run cadence smooths bursty
+            # arrival so a single message cluster is not misread as a surge
+            # against the full-run baseline (which is itself a long-window rate).
+            probe_window = self.config.adaptive_cadence.probe_window_minutes
+            since = datetime.now() - timedelta(minutes=probe_window)
 
             telegram_messages = await self.telegram_reader.get_all_channel_updates(since)
             # Pass a throwaway empty set so the probe never mutates the real
@@ -354,7 +358,7 @@ class NewsSummarizer:
                 telegram_messages
             ) + self.iran_filter.filter_messages(rss_messages)
 
-            rate = len(filtered) / probe_minutes
+            rate = len(filtered) / probe_window
 
             # Consume the radar flag here too so a one-shot outage cannot keep
             # re-promoting on every probe tick; whichever job runs first wins.

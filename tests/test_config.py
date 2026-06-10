@@ -286,11 +286,13 @@ class TestLoadSourcesYaml:
             "  min_baseline_rate: 0.25\n"
             "  fast_escalation: true\n"
             "  probe_interval_minutes: 2\n"
+            "  probe_window_minutes: 12\n"
         )
 
         *_, adaptive_cadence = _load_sources_yaml(channels_file)
 
         assert adaptive_cadence.enabled is True
+        assert adaptive_cadence.probe_window_minutes == 12
         assert adaptive_cadence.min_interval_minutes == 3
         assert adaptive_cadence.max_interval_minutes == 90
         assert adaptive_cadence.baseline_window == 6
@@ -377,6 +379,11 @@ class TestLoadSourcesYaml:
         """Test calm_streak_runs < 1 is rejected (no meaningful decay gate)."""
         with pytest.raises(ConfigError, match="calm_streak_runs"):
             AdaptiveCadenceConfig(calm_streak_runs=0)
+
+    def test_adaptive_cadence_rejects_probe_window_below_interval(self) -> None:
+        """Test a probe window narrower than the run cadence is rejected."""
+        with pytest.raises(ConfigError, match="probe_window_minutes"):
+            AdaptiveCadenceConfig(probe_interval_minutes=10, probe_window_minutes=5)
 
     def test_invalid_cadence_yaml_propagates_config_error(self, tmp_path: Path) -> None:
         """Test an invalid adaptive_cadence block raises ConfigError on load."""
