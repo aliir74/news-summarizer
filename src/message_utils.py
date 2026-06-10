@@ -177,7 +177,16 @@ def split_message(text: str) -> list[str]:
 
 
 def _merge_orphaned_ends(messages: list[str]) -> list[str]:
-    """Merge isolated header/footer chunks with adjacent content."""
+    """Merge an isolated header chunk into the following content chunk.
+
+    Only the header is merged. A symmetric footer merge is impossible by
+    construction: a footer chunk is only emitted as its own trailing chunk when
+    the preceding chunk plus the footer already exceed MAX_MESSAGE_LENGTH (that
+    is the flush condition in split_message), so the merged result would always
+    exceed the limit and could never be combined. The header escapes this because
+    it is flushed before its following paragraph is split, so the chunk it merges
+    with can be a small first sub-chunk rather than the full paragraph.
+    """
     if len(messages) <= 1:
         return messages
 
@@ -188,11 +197,5 @@ def _merge_orphaned_ends(messages: list[str]) -> list[str]:
         combined = result[0] + "\n\n" + result[1]
         if len(combined) <= MAX_MESSAGE_LENGTH:
             result = [combined] + result[2:]
-
-    # Merge isolated footer (contains 📡, no bullets) into previous chunk
-    if "📡" in result[-1] and "🔹" not in result[-1] and len(result) >= 2:
-        combined = result[-2] + "\n\n" + result[-1]
-        if len(combined) <= MAX_MESSAGE_LENGTH:
-            result = result[:-2] + [combined]
 
     return result

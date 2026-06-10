@@ -119,3 +119,37 @@ class TestFileWriter:
         # Don't call start() so directory isn't created
         result = await file_writer.post_summary(summary)
         assert result is False
+
+    async def test_post_alert_creates_file(
+        self, file_writer: FileWriter, test_mode_config: Config
+    ) -> None:
+        """Test that post_alert writes the alert to alerts.txt."""
+        await file_writer.start()
+        result = await file_writer.post_alert("internet outage detected")
+
+        assert result is True
+        alerts_file = test_mode_config.test_output_dir / "alerts.txt"
+        assert alerts_file.exists()
+        content = alerts_file.read_text()
+        assert "internet outage detected" in content
+        assert "Alert at:" in content
+
+    async def test_post_alert_returns_false_on_error(
+        self, test_mode_config: Config
+    ) -> None:
+        """Test that post_alert returns False on write error."""
+        invalid_config = Config(
+            telegram_api_id=test_mode_config.telegram_api_id,
+            telegram_api_hash=test_mode_config.telegram_api_hash,
+            telegram_session_string=test_mode_config.telegram_session_string,
+            telegram_bot_token=test_mode_config.telegram_bot_token,
+            output_channel_id=test_mode_config.output_channel_id,
+            openrouter_api_key=test_mode_config.openrouter_api_key,
+            test_mode=True,
+            test_output_dir=Path("/nonexistent/path/that/does/not/exist"),
+        )
+        file_writer = FileWriter(invalid_config)
+
+        # Don't call start() so the directory isn't created.
+        result = await file_writer.post_alert("alert text")
+        assert result is False

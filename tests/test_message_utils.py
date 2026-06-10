@@ -298,3 +298,43 @@ class TestPostprocessLlmOutput:
         text = "🔹 just a plain bullet"
         result = postprocess_llm_output(text, refs)
         assert result == "🔹 just a plain bullet"
+
+
+class TestSplitMessageCoverage:
+    """Tests for the harder split branches (coverage completeness)."""
+
+    def test_split_long_multiline_paragraph(self) -> None:
+        """A single long paragraph with many lines is split by line."""
+        line = "🔹 " + "x" * 200
+        text = "\n".join(line for _ in range(30))  # > MAX, no blank-line breaks
+        result = split_message(text)
+
+        assert len(result) >= 2
+        for part in result:
+            assert len(part) <= MAX_MESSAGE_LENGTH
+
+    def test_split_strips_unbalanced_html_tags(self) -> None:
+        """A chunk left with an unbalanced <a> tag has its tags stripped."""
+        chunk_a = '<a href="http://example.com">unclosed ' + "a" * 4100
+        chunk_b = "b" * 100
+        text = chunk_a + "\n\n" + chunk_b
+
+        result = split_message(text)
+
+        # Every emitted chunk must have balanced (or zero) anchor tags.
+        for part in result:
+            assert part.count("<a ") == part.count("</a>")
+        # The orphaned opening tag was stripped from its chunk.
+        assert "<a " not in result[0]
+
+    def test_merges_orphaned_header(self) -> None:
+        """An isolated 📰 header chunk merges into the following content chunk."""
+        header = "📰 سرخط اخبار"
+        line1_small = "🔹 first item"
+        line2_huge = "🔹 " + "x" * 4200  # forces a split after line1
+        text = header + "\n\n" + line1_small + "\n" + line2_huge
+
+        result = split_message(text)
+
+        assert result[0].startswith("📰")
+        assert "🔹" in result[0]  # header merged with the first bullet
