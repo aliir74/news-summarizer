@@ -85,6 +85,11 @@ class AdaptiveCadenceController:
         self._rate_window: list[float] = []
         self._current_interval = self._baseline_interval
         self._current_level = IntensityLevel.NORMAL
+        # Count of consecutive NORMAL full-runs. The interval is only allowed to
+        # decay once this reaches calm_streak_runs, so a single quiet window in
+        # the middle of a surge cannot trigger a misleading "calming down"
+        # decay that the next probe immediately re-escalates.
+        self._calm_streak = 0
 
     @property
     def current_interval(self) -> int:
@@ -113,6 +118,7 @@ class AdaptiveCadenceController:
                 self._current_interval = int(
                     data.get("current_interval", self._baseline_interval)
                 )
+                self._calm_streak = max(int(data.get("calm_streak", 0)), 0)
                 level_str = data.get("current_level", IntensityLevel.NORMAL.value)
                 try:
                     self._current_level = IntensityLevel(level_str)
@@ -133,6 +139,7 @@ class AdaptiveCadenceController:
                 "rate_window": self._rate_window,
                 "current_interval": self._current_interval,
                 "current_level": self._current_level.value,
+                "calm_streak": self._calm_streak,
             }
             CADENCE_STATE_FILE.write_text(json.dumps(data, indent=2))
         except OSError as e:
@@ -231,16 +238,29 @@ class AdaptiveCadenceController:
         previous_interval = self._current_interval
         target = self._target_interval(level)
         if target < self._current_interval:
-            # Escalate now.
+            # Escalate now and reset the calm streak: any rise restarts the
+            # sustained-calm requirement before the next decay.
             self._current_interval = target
+            self._calm_streak = 0
+        elif level is IntensityLevel.NORMAL:
+            # Genuinely calm run. Require calm_streak_runs consecutive NORMAL
+            # runs before relaxing, so one quiet window mid-surge cannot trigger
+            # a "calming down" decay that the probe immediately re-escalates.
+            self._calm_streak = min(self._calm_streak + 1, self.config.calm_streak_runs)
+            if self._calm_streak >= self.config.calm_streak_runs:
+                # Decay gradually toward the target. Guarantee at least +1 per run
+                # so rounding can never stall the interval short of the target.
+                stepped = max(
+                    self._current_interval + 1,
+                    round(self._current_interval * self.config.decay_factor),
+                )
+                self._current_interval = min(target, stepped)
         else:
-            # Decay gradually toward the target. Guarantee at least +1 per run so
-            # rounding can never stall the interval short of the target.
-            stepped = max(
-                self._current_interval + 1,
-                round(self._current_interval * self.config.decay_factor),
-            )
-            self._current_interval = min(target, stepped)
+            # Still ELEVATED/SURGE but the interval is already at or below the
+            # target (e.g. SURGE escalated us past the ELEVATED target). Hold the
+            # tighter interval and reset the streak — the news is not calm, so
+            # decay must re-earn its sustained-calm runs.
+            self._calm_streak = 0
 
         self._current_interval = max(
             self.config.min_interval_minutes, min(self._current_interval, self._ceiling)
@@ -285,6 +305,10 @@ class AdaptiveCadenceController:
             self.config.min_interval_minutes,
             min(self._target_interval(level), self._ceiling),
         )
+        # A probe escalation means news is rising again: reset the calm streak so
+        # the next full run cannot immediately decay off a stale streak (which is
+        # what produced the decay/re-escalate flapping).
+        self._calm_streak = 0
         self._save_state()
         return CadenceDecision(
             previous_interval=previous_interval,

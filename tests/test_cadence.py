@@ -60,6 +60,7 @@ class TestStatePersistence:
         controller._rate_window = [0.5, 1.2, 3.4]
         controller._current_interval = 7
         controller._current_level = IntensityLevel.ELEVATED
+        controller._calm_streak = 1
         controller._save_state()
 
         loaded = AdaptiveCadenceController(cadence_config)
@@ -68,6 +69,7 @@ class TestStatePersistence:
         assert loaded._rate_window == [0.5, 1.2, 3.4]
         assert loaded.current_interval == 7
         assert loaded.current_level == IntensityLevel.ELEVATED
+        assert loaded._calm_streak == 1
 
     def test_load_missing_file_keeps_defaults(
         self, cadence_config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -224,6 +226,7 @@ class TestRecordAndCompute:
     def test_decays_gradually_without_overshoot(self, cadence_config: Config) -> None:
         """Test calming grows the interval step by step, capped at baseline."""
         controller = AdaptiveCadenceController(cadence_config)
+        controller.config.calm_streak_runs = 1  # isolate the decay-step math
         self._seed_baseline(controller)
         controller._current_interval = 5
         controller._current_level = IntensityLevel.SURGE
@@ -258,6 +261,7 @@ class TestRecordAndCompute:
         """Test decay can climb above baseline up to max_interval_minutes."""
         controller = AdaptiveCadenceController(cadence_config)
         controller.config.max_interval_minutes = 60
+        controller.config.calm_streak_runs = 1  # isolate the decay-step math
         controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
         controller._current_interval = 5
         controller._current_level = IntensityLevel.SURGE
@@ -326,6 +330,7 @@ class TestCadenceDecisionReasons:
     def test_decay_reason(self, cadence_config: Config) -> None:
         """Test a decay step cites CALM_DECAY."""
         controller = AdaptiveCadenceController(cadence_config)
+        controller.config.calm_streak_runs = 1  # decay on the first calm run
         self._seed_baseline(controller)
         controller._current_interval = 5
         controller._current_level = IntensityLevel.SURGE
@@ -411,3 +416,83 @@ class TestConsiderEscalation:
         assert decision.new_interval == 15  # ELEVATED => half the 30min baseline
         assert decision.reason == CadenceChangeReason.RADAR_OUTAGE
         assert controller.current_level == IntensityLevel.ELEVATED
+
+
+class TestDecayHysteresis:
+    """Tests for the calm-streak gate that prevents decay/re-escalate flapping.
+
+    With the default calm_streak_runs=2, a single quiet window in the middle of
+    a surge must not relax the cadence; only sustained calm decays it.
+    """
+
+    def _seed_baseline(self, controller: AdaptiveCadenceController) -> None:
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+    def test_holds_interval_until_calm_streak_met(self, cadence_config: Config) -> None:
+        """Test the first calm run after a surge holds; the second decays."""
+        controller = AdaptiveCadenceController(cadence_config)  # calm_streak_runs=2
+        self._seed_baseline(controller)
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        first = controller.record_and_compute(1.0)  # NORMAL, streak -> 1
+        assert first.changed is False
+        assert first.new_interval == 5  # held, not relaxed
+
+        second = controller.record_and_compute(1.0)  # NORMAL, streak -> 2
+        assert second.changed is True
+        assert second.reason == CadenceChangeReason.CALM_DECAY
+        assert second.new_interval == 8  # round(5 * 1.5)
+
+    def test_volume_escalation_resets_calm_streak(self, cadence_config: Config) -> None:
+        """Test a renewed surge clears accumulated calm runs."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        controller._current_interval = 15
+        controller._current_level = IntensityLevel.ELEVATED
+
+        controller.record_and_compute(1.0)  # NORMAL, streak -> 1
+        controller.record_and_compute(4.0)  # SURGE escalates to 5, streak -> 0
+
+        assert controller.current_interval == 5
+
+        # After the reset it again takes two calm runs to start decaying.
+        first = controller.record_and_compute(1.0)
+        assert first.changed is False  # held by the streak gate
+        second = controller.record_and_compute(1.0)
+        assert second.changed is True
+        assert second.reason == CadenceChangeReason.CALM_DECAY
+
+    def test_probe_escalation_resets_calm_streak(self, cadence_config: Config) -> None:
+        """Test the exact flap scenario: a probe re-escalation blocks the next
+        full run from immediately decaying off a stale calm streak."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        controller.record_and_compute(1.0)  # NORMAL, streak -> 1
+        controller.record_and_compute(1.0)  # NORMAL, streak -> 2, decays 5 -> 8
+
+        probe = controller.consider_escalation(4.0)  # SURGE re-escalates to 5
+        assert probe.changed is True
+        assert controller.current_interval == 5
+
+        # Without the streak reset this run would decay again (flap). It must hold.
+        after = controller.record_and_compute(1.0)
+        assert after.changed is False
+        assert after.new_interval == 5
+
+    def test_elevated_does_not_decay_on_its_own(self, cadence_config: Config) -> None:
+        """Test an ELEVATED reading holds the tighter interval and resets calm."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        controller.record_and_compute(1.0)  # NORMAL, streak -> 1
+        elevated = controller.record_and_compute(2.0)  # ELEVATED (target 15 > 5)
+
+        assert elevated.changed is False  # not an escalation, not a decay
+        assert controller.current_interval == 5  # held
+        assert controller._calm_streak == 0  # reset; not calm

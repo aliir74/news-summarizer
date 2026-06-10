@@ -71,6 +71,7 @@ adaptive_cadence:
   elevated_ratio: 2.0      # rate >= elevated_ratio * baseline => ELEVATED (~half interval)
   surge_ratio: 4.0         # rate >= surge_ratio * baseline => SURGE (min_interval)
   decay_factor: 1.5        # Interval grows by this factor per calm run when decaying
+  calm_streak_runs: 2      # Consecutive NORMAL runs required before decaying (anti-flap)
   min_baseline_rate: 0.1   # Floor for the baseline rate, in MESSAGES PER MINUTE
   fast_escalation: true    # Run a cheap escalate-only probe between summary runs
   probe_interval_minutes: 5  # Probe cadence when fast_escalation is on
