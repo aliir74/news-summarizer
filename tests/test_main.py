@@ -314,6 +314,50 @@ class TestIntensityProbe:
         assert mock_reschedule.call_args.kwargs["minutes"] < 30
         mock_modify.assert_not_called()  # probe only reschedules, never fires early
 
+    async def test_probe_window_smooths_small_cluster(
+        self, cadence_config: Config
+    ) -> None:
+        """Test the trailing window stops a tiny burst from reading as a surge.
+
+        Two messages over the 15-min window is 0.13/min (NORMAL vs a 0.1
+        baseline), so the probe does not escalate. The old 5-min denominator
+        would have read 0.4/min (a 4x SURGE) and flapped the cadence.
+        """
+        cfg = self._fast_config(cadence_config)
+        cfg.adaptive_cadence.probe_window_minutes = 15
+        summarizer = NewsSummarizer(cfg)
+        assert summarizer.cadence_controller is not None
+        summarizer.cadence_controller._rate_window = [0.1, 0.1, 0.1, 0.1, 0.1]
+
+        with (
+            patch.object(
+                summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[_iran_msg(), _iran_msg()],
+            ) as mock_fetch,
+            patch.object(
+                summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(summarizer.scheduler, "reschedule_job") as mock_reschedule,
+            patch.object(
+                summarizer.output_writer,
+                "post_alert",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_post_alert,
+        ):
+            await summarizer._probe_intensity_job()
+
+        mock_reschedule.assert_not_called()  # no false escalation
+        mock_post_alert.assert_not_called()  # and no notice spam
+        # The probe looked back over the wider window, not the 5-min run cadence.
+        since = mock_fetch.call_args.args[0]
+        assert (datetime.now() - since) > timedelta(minutes=10)
+
     async def test_probe_never_fires_immediate_catchup(
         self, cadence_config: Config
     ) -> None:

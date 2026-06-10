@@ -65,9 +65,11 @@ class AdaptiveCadenceConfig:
     elevated_ratio: float = 2.0  # rate >= elevated_ratio * baseline => ELEVATED
     surge_ratio: float = 4.0  # rate >= surge_ratio * baseline => SURGE
     decay_factor: float = 1.5  # Multiply interval by this per calm run when decaying
+    calm_streak_runs: int = 2  # Consecutive NORMAL full-runs required before decaying
     min_baseline_rate: float = 0.1  # Floor for the baseline rate (messages per minute)
     fast_escalation: bool = False  # Run the cheap escalation probe between summary runs
-    probe_interval_minutes: int = 5  # Probe cadence when fast_escalation is on
+    probe_interval_minutes: int = 5  # How often the probe runs when fast_escalation is on
+    probe_window_minutes: int = 15  # Trailing window the probe measures its rate over
 
     def __post_init__(self) -> None:
         """Validate the cadence knobs so a misconfiguration cannot silently
@@ -76,12 +78,25 @@ class AdaptiveCadenceConfig:
             raise ConfigError("adaptive_cadence.min_interval_minutes must be >= 1")
         if self.probe_interval_minutes < 1:
             raise ConfigError("adaptive_cadence.probe_interval_minutes must be >= 1")
+        # The probe averages its rate over probe_window_minutes, decoupled from
+        # how often it runs. A window shorter than the run cadence leaves gaps in
+        # coverage; a longer window smooths bursts so a single message cluster is
+        # not misread as a surge against the (long-window) full-run baseline.
+        if self.probe_window_minutes < self.probe_interval_minutes:
+            raise ConfigError(
+                "adaptive_cadence.probe_window_minutes must be >= probe_interval_minutes"
+            )
         if self.baseline_window < 1:
             raise ConfigError("adaptive_cadence.baseline_window must be >= 1")
         # decay_factor must exceed 1.0 or the interval never grows back toward the
         # baseline after a surge, pinning the bot at min_interval_minutes forever.
         if self.decay_factor <= 1.0:
             raise ConfigError("adaptive_cadence.decay_factor must be > 1.0")
+        # calm_streak_runs >= 1: with 1 the interval decays on the first calm run
+        # (no hysteresis); higher values demand sustained calm before relaxing,
+        # which prevents the decay/re-escalate flapping during a bursty surge.
+        if self.calm_streak_runs < 1:
+            raise ConfigError("adaptive_cadence.calm_streak_runs must be >= 1")
 
 
 @dataclass
@@ -360,6 +375,9 @@ def _load_sources_yaml(
                 ),
                 surge_ratio=float(raw_cadence.get("surge_ratio", defaults.surge_ratio)),
                 decay_factor=float(raw_cadence.get("decay_factor", defaults.decay_factor)),
+                calm_streak_runs=int(
+                    raw_cadence.get("calm_streak_runs", defaults.calm_streak_runs)
+                ),
                 min_baseline_rate=float(
                     raw_cadence.get("min_baseline_rate", defaults.min_baseline_rate)
                 ),
@@ -368,6 +386,9 @@ def _load_sources_yaml(
                 ),
                 probe_interval_minutes=int(
                     raw_cadence.get("probe_interval_minutes", defaults.probe_interval_minutes)
+                ),
+                probe_window_minutes=int(
+                    raw_cadence.get("probe_window_minutes", defaults.probe_window_minutes)
                 ),
             )
 
