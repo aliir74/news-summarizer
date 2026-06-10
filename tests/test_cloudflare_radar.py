@@ -1,5 +1,6 @@
 """Tests for the Cloudflare Radar monitor."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -336,6 +337,238 @@ class TestCloudflareRadarMonitor:
         assert "anomaly-1" in monitor2._seen_anomaly_ids
         assert "anomaly-2" in monitor2._seen_anomaly_ids
         assert monitor2._last_alert_direction == "drop"
+
+
+class TestCloudflareRadarCoverage:
+    """Tests for radar error paths and edge cases (coverage completeness)."""
+
+    def _monitor_with_get(
+        self, radar_config: Config, response: MagicMock
+    ) -> CloudflareRadarMonitor:
+        """Build a monitor whose HTTP client returns the given response."""
+        monitor = CloudflareRadarMonitor(radar_config)
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=response)
+        monitor._http_client = mock_client
+        return monitor
+
+    async def test_anomaly_invalid_status_falls_back_to_unverified(
+        self, radar_config: Config
+    ) -> None:
+        """An unrecognized status string is parsed as UNVERIFIED."""
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {
+            "result": {
+                "trafficAnomalies": [
+                    {
+                        "uuid": "a-1",
+                        "locationCode": "IR",
+                        "startDate": "2024-01-15T10:00:00Z",
+                        "endDate": None,
+                        "status": "TOTALLY_UNKNOWN",
+                        "asnNumber": None,
+                    }
+                ]
+            }
+        }
+        monitor = self._monitor_with_get(radar_config, response)
+
+        anomalies = await monitor.get_cloudflare_anomalies()
+
+        assert len(anomalies) == 1
+        assert anomalies[0].status == AnomalyStatus.UNVERIFIED
+
+    async def test_anomaly_unparseable_item_is_skipped(
+        self, radar_config: Config
+    ) -> None:
+        """An anomaly with an unparseable startDate is skipped, not fatal."""
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {
+            "result": {
+                "trafficAnomalies": [
+                    {
+                        "uuid": "bad",
+                        "locationCode": "IR",
+                        "startDate": "not-a-date",
+                        "status": "UNVERIFIED",
+                    }
+                ]
+            }
+        }
+        monitor = self._monitor_with_get(radar_config, response)
+
+        anomalies = await monitor.get_cloudflare_anomalies()
+
+        assert anomalies == []
+
+    async def test_anomaly_generic_exception_returns_empty(
+        self, radar_config: Config
+    ) -> None:
+        """A non-HTTP error while fetching anomalies returns an empty list."""
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.side_effect = RuntimeError("boom")
+        monitor = self._monitor_with_get(radar_config, response)
+
+        anomalies = await monitor.get_cloudflare_anomalies()
+
+        assert anomalies == []
+
+    async def test_timeseries_unparseable_point_is_skipped(
+        self, radar_config: Config
+    ) -> None:
+        """A traffic data point with a null value is skipped."""
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {
+            "result": {
+                "serie_0": {
+                    "timestamps": ["2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z"],
+                    "values": [None, 0.9],
+                }
+            }
+        }
+        monitor = self._monitor_with_get(radar_config, response)
+
+        data_points = await monitor.get_traffic_timeseries()
+
+        assert len(data_points) == 1
+        assert data_points[0].value == 0.9
+
+    async def test_timeseries_generic_exception_returns_empty(
+        self, radar_config: Config
+    ) -> None:
+        """A non-HTTP error while fetching the timeseries returns an empty list."""
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.side_effect = RuntimeError("boom")
+        monitor = self._monitor_with_get(radar_config, response)
+
+        data_points = await monitor.get_traffic_timeseries()
+
+        assert data_points == []
+
+    async def test_detect_traffic_change_skips_zero_previous(
+        self, radar_config: Config
+    ) -> None:
+        """A zero previous value short-circuits change detection (no div-by-zero)."""
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {
+            "result": {
+                "serie_0": {
+                    "timestamps": ["2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z"],
+                    "values": [0.0, 0.5],
+                }
+            }
+        }
+        monitor = self._monitor_with_get(radar_config, response)
+
+        change = await monitor.detect_traffic_change()
+
+        assert change is None
+
+    async def test_check_all_skips_false_positive_anomaly(
+        self, radar_config: Config, sample_timeseries_stable_response: dict
+    ) -> None:
+        """A FALSE_POSITIVE anomaly produces no alert."""
+        monitor = CloudflareRadarMonitor(radar_config)
+
+        anomaly_response = MagicMock()
+        anomaly_response.raise_for_status = MagicMock()
+        anomaly_response.json.return_value = {
+            "result": {
+                "trafficAnomalies": [
+                    {
+                        "uuid": "fp-1",
+                        "locationCode": "IR",
+                        "startDate": "2024-01-15T10:00:00Z",
+                        "endDate": None,
+                        "status": "FALSE_POSITIVE",
+                        "asnNumber": None,
+                    }
+                ]
+            }
+        }
+        timeseries_response = MagicMock()
+        timeseries_response.raise_for_status = MagicMock()
+        timeseries_response.json.return_value = sample_timeseries_stable_response
+
+        mock_client = MagicMock()
+
+        async def mock_get(url: str, **_: object) -> MagicMock:
+            if "traffic_anomalies" in url:
+                return anomaly_response
+            return timeseries_response
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+        monitor._http_client = mock_client
+
+        alerts = await monitor.check_all()
+
+        assert alerts == []
+
+    async def test_check_all_respects_cooldown(
+        self, radar_config: Config, sample_timeseries_drop_response: dict
+    ) -> None:
+        """A recent same-direction alert within the cooldown is suppressed."""
+        cooldown_config = replace(
+            radar_config,
+            radar_monitor=replace(radar_config.radar_monitor, alert_cooldown_hours=6),
+        )
+        monitor = CloudflareRadarMonitor(cooldown_config)
+        monitor._last_alert_timestamp = datetime.now()
+        monitor._last_alert_direction = "drop"
+
+        anomaly_response = MagicMock()
+        anomaly_response.raise_for_status = MagicMock()
+        anomaly_response.json.return_value = {"result": {"trafficAnomalies": []}}
+        timeseries_response = MagicMock()
+        timeseries_response.raise_for_status = MagicMock()
+        timeseries_response.json.return_value = sample_timeseries_drop_response
+
+        mock_client = MagicMock()
+
+        async def mock_get(url: str, **_: object) -> MagicMock:
+            if "traffic_anomalies" in url:
+                return anomaly_response
+            return timeseries_response
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+        monitor._http_client = mock_client
+
+        alerts = await monitor.check_all()
+
+        change_alerts = [a for a in alerts if a.alert_type == AlertType.TRAFFIC_CHANGE]
+        assert change_alerts == []
+
+    def test_load_state_handles_invalid_json(
+        self, radar_config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Invalid radar state JSON is logged and ignored, not fatal."""
+        state_file = tmp_path / ".radar_state"
+        state_file.write_text("not valid json")
+        monkeypatch.setattr("src.cloudflare_radar.RADAR_STATE_FILE", state_file)
+
+        monitor = CloudflareRadarMonitor(radar_config)
+        monitor._load_state()  # Should not raise.
+
+        assert monitor._seen_anomaly_ids == set()
+
+    def test_save_state_handles_os_error(
+        self, radar_config: Config, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OSError while writing radar state is swallowed with a warning."""
+        fake_path = MagicMock()
+        fake_path.write_text.side_effect = OSError("disk full")
+        monkeypatch.setattr("src.cloudflare_radar.RADAR_STATE_FILE", fake_path)
+
+        monitor = CloudflareRadarMonitor(radar_config)
+        monitor._save_state()  # Should not raise.
+
+        fake_path.write_text.assert_called_once()
 
 
 class TestFormatAnomalyAlert:
