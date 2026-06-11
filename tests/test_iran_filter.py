@@ -183,3 +183,12 @@ class TestIranRelevanceFilter:
             source_type=SourceType.TELEGRAM,
         )
         assert filter_obj.filter_message(tg_message) is True
+
+
+class TestKeywordCountNoPattern:
+    """Tests for _keyword_count when no keyword pattern is configured."""
+
+    def test_keyword_count_returns_zero_without_pattern(self) -> None:
+        """With filtering disabled (no pattern), keyword count is zero."""
+        filt = IranRelevanceFilter(IranFilter(enabled=False, keywords=[]))
+        assert filt._keyword_count("Iran Tehran war") == 0

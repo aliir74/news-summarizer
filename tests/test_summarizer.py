@@ -13,6 +13,7 @@ from src.summarizer import (
     SUMMARIZATION_PROMPT,
     TRANSLATION_PROMPT,
     Summarizer,
+    _strip_incomplete_bullet,
 )
 
 
@@ -557,3 +558,49 @@ class TestTemperatureSetting:
 
             call_kwargs = mock_create.call_args.kwargs
             assert call_kwargs["temperature"] == 0
+
+
+class TestSummarizerCoverage:
+    """Tests for summarizer edge cases (coverage completeness)."""
+
+    def test_strip_incomplete_trailing_bullet(self) -> None:
+        """A trailing bullet without sentence-ending punctuation is dropped."""
+        text = "🔹 خبر کامل است.\n🔹 این خبر ناقص"
+        result = _strip_incomplete_bullet(text)
+
+        assert "ناقص" not in result
+        assert "کامل" in result
+
+    def test_keeps_complete_trailing_bullet(self) -> None:
+        """A trailing bullet ending in punctuation is left untouched."""
+        text = "🔹 خبر اول.\n🔹 خبر دوم کامل است."
+        result = _strip_incomplete_bullet(text)
+
+        assert result == text
+
+    def test_two_stage_returns_none_when_all_llm_calls_fail(
+        self, sample_config: Config
+    ) -> None:
+        """When no summary is produced in either language, None is returned."""
+        sample_config.two_stage_summarization = True
+        summarizer = Summarizer(sample_config)
+        messages = [
+            Message(
+                id=1,
+                channel_username="fa_channel",
+                channel_title="Persian Channel",
+                text="ایران خبر مهمی دارد.",
+                timestamp=datetime.now(),
+            )
+        ]
+
+        empty_response = MagicMock()
+        empty_response.choices = [MagicMock()]
+        empty_response.choices[0].message.content = None
+
+        with patch.object(
+            summarizer._client.chat.completions, "create", return_value=empty_response
+        ):
+            summary = summarizer.summarize_news(messages)
+
+        assert summary is None

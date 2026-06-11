@@ -148,3 +148,19 @@ class TestCompositeOutputWriter:
         result = await composite.post_alert("Test alert")
 
         assert result is True
+
+
+class TestCompositeStopErrors:
+    """Tests for stop() resilience when a writer raises."""
+
+    async def test_stop_logs_writer_failure(self) -> None:
+        """A writer that raises on stop is logged and does not abort the others."""
+        good = _make_writer()
+        bad = _make_writer()
+        bad.stop = AsyncMock(side_effect=RuntimeError("cannot stop"))
+
+        composite = CompositeOutputWriter([good, bad])
+        await composite.stop()  # Should not raise.
+
+        good.stop.assert_awaited_once()
+        bad.stop.assert_awaited_once()

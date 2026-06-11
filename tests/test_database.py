@@ -310,3 +310,34 @@ class TestFingerprintDatabase:
         db_path = tmp_path / "test.db"
         db = FingerprintDatabase(db_path)
         db.close()  # Should not raise
+
+
+class TestCleanupOldDeletes:
+    """Tests for cleanup_old when rows are actually removed."""
+
+    def test_cleanup_old_removes_aged_rows(self, tmp_path: Path) -> None:
+        """Fingerprints older than the window are deleted and counted."""
+        db_path = tmp_path / "test.db"
+        db = FingerprintDatabase(db_path)
+        db.init_db()
+
+        fp = ArticleFingerprint(
+            url="https://example.com/old",
+            title="Old",
+            topic="news",
+            entities=[],
+            event_type="report",
+            keywords=[],
+            source="BBC",
+        )
+        db.store_fingerprint(fp)
+        # Age the stored row well beyond the cleanup window.
+        assert db._conn is not None
+        db._conn.execute("UPDATE fingerprints SET timestamp = datetime('now', '-10 days')")
+        db._conn.commit()
+
+        deleted = db.cleanup_old(days=7)
+
+        assert deleted == 1
+        assert db.count() == 0
+        db.close()

@@ -1,6 +1,7 @@
 """Tests for data models."""
 
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -382,3 +383,12 @@ class TestBuildCadenceNotice:
 
         with pytest.raises(ValueError):
             build_cadence_notice(decision)
+
+
+class TestExtractDomainCoverage:
+    """Tests for extract_domain error handling."""
+
+    def test_extract_domain_returns_empty_on_parse_error(self) -> None:
+        """A urlparse failure yields an empty domain rather than raising."""
+        with patch("src.models.urlparse", side_effect=ValueError("bad url")):
+            assert extract_domain("http://example.com") == ""

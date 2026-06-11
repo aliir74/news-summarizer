@@ -585,3 +585,13 @@ class TestDeduplicator:
         assert deleted == 0  # Recent entry not cleaned
 
         dedup.stop()
+
+
+class TestParseJsonResponseCoverage:
+    """Tests for _parse_json_response validation branches."""
+
+    def test_non_list_entities_returns_none(self, mock_config: Config) -> None:
+        """A response whose entities field is not a list is rejected."""
+        dedup = Deduplicator(mock_config)
+        result = dedup._parse_json_response('{"topic": "x", "entities": "not-a-list"}')
+        assert result is None

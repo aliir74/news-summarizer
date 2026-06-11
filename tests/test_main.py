@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src import main as main_module
 from src.cadence import CadenceChangeReason, CadenceDecision, IntensityLevel
 from src.composite_writer import CompositeOutputWriter
 from src.config import (
@@ -17,7 +18,7 @@ from src.config import (
     DeduplicationConfig,
 )
 from src.file_writer import FileWriter
-from src.main import MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer
+from src.main import MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer, main
 from src.models import Message
 from src.telegram_bot import TelegramBot
 
@@ -1254,16 +1255,12 @@ class TestMainEntrypoint:
             patch.object(Config, "from_env", side_effect=ConfigError("bad config")),
             pytest.raises(SystemExit) as exc_info,
         ):
-            from src.main import main
-
             await main()
 
         assert exc_info.value.code == 1
 
     async def test_main_starts_and_stops(self, sample_config: Config) -> None:
         """main() builds the summarizer, starts it, waits, then stops it."""
-        from src import main as main_module
-
         no_sources = replace(sample_config, channels=[], rss_feeds=[])
         mock_event = MagicMock()
         mock_event.wait = AsyncMock()

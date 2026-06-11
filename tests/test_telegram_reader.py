@@ -244,3 +244,19 @@ class TestTelegramReader:
         assert len(messages) == 2
         # Should be sorted by timestamp (newest first)
         assert messages[0].timestamp > messages[1].timestamp
+
+
+class TestGetRecentMessagesErrors:
+    """Tests for generic error handling in get_recent_messages."""
+
+    async def test_generic_exception_returns_empty(self, reader: TelegramReader) -> None:
+        """An unexpected error while fetching is caught and yields no messages."""
+        with patch.object(reader, "_client") as mock_client:
+            mock_client.get_chat = AsyncMock(side_effect=RuntimeError("boom"))
+            reader._client = mock_client
+
+            messages = await reader.get_recent_messages(
+                "channel", datetime(2024, 1, 1)
+            )
+
+        assert messages == []

@@ -1,6 +1,7 @@
 """Tests for the adaptive cadence controller."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -96,6 +97,36 @@ class TestStatePersistence:
         controller._load_state()
 
         assert controller.current_interval == 30
+
+    def test_load_invalid_level_falls_back_to_normal(
+        self, cadence_config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unrecognized level string in state loads as NORMAL."""
+        state_file = tmp_path / ".cadence_state"
+        state_file.write_text(
+            '{"rate_window": [0.2], "current_interval": 12, '
+            '"calm_streak": 0, "current_level": "BOGUS"}'
+        )
+        monkeypatch.setattr("src.cadence.CADENCE_STATE_FILE", state_file)
+
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._load_state()
+
+        assert controller.current_level == IntensityLevel.NORMAL
+        assert controller.current_interval == 12
+
+    def test_save_state_handles_os_error(
+        self, cadence_config: Config, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OSError while saving cadence state is swallowed with a warning."""
+        fake_path = MagicMock()
+        fake_path.write_text.side_effect = OSError("disk full")
+        monkeypatch.setattr("src.cadence.CADENCE_STATE_FILE", fake_path)
+
+        controller = AdaptiveCadenceController(cadence_config)
+        controller._save_state()  # Should not raise.
+
+        fake_path.write_text.assert_called_once()
 
 
 class TestBaseline:

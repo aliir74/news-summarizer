@@ -443,3 +443,84 @@ class TestCleanText:
         assert "Google News" in result
         assert "اخبار مهم" in result
         assert "ایران" in result
+
+
+class TestRSSReaderCoverage:
+    """Tests for RSS feed parsing edge cases (coverage completeness)."""
+
+    def _reader_with_response(self, sample_config: Config) -> RSSReader:
+        """Build a reader whose HTTP client returns a dummy 200 response."""
+        reader = RSSReader(sample_config)
+        mock_response = MagicMock()
+        mock_response.text = "<rss></rss>"
+        mock_response.raise_for_status = MagicMock()
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        reader._client = mock_client
+        return reader
+
+    async def test_logs_bozo_parse_warning(
+        self, sample_config: Config, sample_rss_feed: RSSFeed
+    ) -> None:
+        """A malformed feed (bozo) logs a warning but does not raise."""
+        reader = self._reader_with_response(sample_config)
+        parsed = MagicMock()
+        parsed.bozo = True
+        parsed.bozo_exception = Exception("malformed")
+        parsed.entries = []
+
+        with patch("src.rss_reader.feedparser.parse", return_value=parsed):
+            messages = await reader.get_feed_updates(sample_rss_feed, datetime(2024, 1, 1))
+
+        assert messages == []
+
+    async def test_entry_without_timestamp_is_kept(
+        self, sample_config: Config, sample_rss_feed: RSSFeed
+    ) -> None:
+        """An entry with no parseable date falls back to 'now' and is included."""
+        reader = self._reader_with_response(sample_config)
+        parsed = MagicMock()
+        parsed.bozo = False
+        parsed.entries = [
+            {"link": "https://example.com/x", "title": "Iran news", "summary": "about Iran"}
+        ]
+
+        with patch("src.rss_reader.feedparser.parse", return_value=parsed):
+            messages = await reader.get_feed_updates(sample_rss_feed, datetime(2024, 1, 1))
+
+        assert len(messages) == 1
+
+    async def test_entry_without_text_is_skipped(
+        self, sample_config: Config, sample_rss_feed: RSSFeed
+    ) -> None:
+        """An entry with no title or description yields no message."""
+        reader = self._reader_with_response(sample_config)
+        parsed = MagicMock()
+        parsed.bozo = False
+        parsed.entries = [{"link": "https://example.com/empty"}]
+
+        with patch("src.rss_reader.feedparser.parse", return_value=parsed):
+            messages = await reader.get_feed_updates(sample_rss_feed, datetime(2024, 1, 1))
+
+        assert messages == []
+
+    async def test_generic_exception_returns_empty(
+        self, sample_config: Config, sample_rss_feed: RSSFeed
+    ) -> None:
+        """A non-HTTP error during parsing is caught and yields no messages."""
+        reader = self._reader_with_response(sample_config)
+
+        with patch("src.rss_reader.feedparser.parse", side_effect=RuntimeError("boom")):
+            messages = await reader.get_feed_updates(sample_rss_feed, datetime(2024, 1, 1))
+
+        assert messages == []
+
+
+class TestParseEntryTimeCoverage:
+    """Tests for _parse_entry_time edge cases."""
+
+    def test_invalid_parsed_time_tuple_returns_none(self) -> None:
+        """An out-of-range parsed-time tuple is handled gracefully."""
+        # (0, 0, 0, ...) makes datetime() raise ValueError (year 0 is invalid).
+        entry = {"published_parsed": (0, 0, 0, 0, 0, 0)}
+        assert _parse_entry_time(entry) is None
