@@ -243,18 +243,21 @@ class AdaptiveCadenceController:
             self._current_interval = target
             self._calm_streak = 0
         elif level is IntensityLevel.NORMAL:
-            # Genuinely calm run. Require calm_streak_runs consecutive NORMAL
-            # runs before relaxing, so one quiet window mid-surge cannot trigger
-            # a "calming down" decay that the probe immediately re-escalates.
-            self._calm_streak = min(self._calm_streak + 1, self.config.calm_streak_runs)
+            # Genuinely calm run. Decay is deliberately slow: every single step
+            # up requires calm_streak_runs consecutive NORMAL runs, after which
+            # the streak resets so the NEXT step must re-earn the same sustained
+            # calm. This both prevents one quiet window mid-surge from relaxing
+            # the cadence and keeps the climb back toward the baseline gradual.
+            self._calm_streak += 1
             if self._calm_streak >= self.config.calm_streak_runs:
-                # Decay gradually toward the target. Guarantee at least +1 per run
-                # so rounding can never stall the interval short of the target.
+                # Decay one step toward the target. Guarantee at least +1 so
+                # rounding can never stall the interval short of the target.
                 stepped = max(
                     self._current_interval + 1,
                     round(self._current_interval * self.config.decay_factor),
                 )
                 self._current_interval = min(target, stepped)
+                self._calm_streak = 0
         else:
             # Still ELEVATED/SURGE but the interval is already at or below the
             # target (e.g. SURGE escalated us past the ELEVATED target). Hold the
@@ -281,18 +284,26 @@ class AdaptiveCadenceController:
     ) -> CadenceDecision:
         """Escalate-only check for the cheap probe between summary runs.
 
-        Returns a changed decision when the computed level is higher than the
-        current level; otherwise returns a non-changed decision and leaves state
-        untouched. It never decays and never appends to the baseline window, so
-        the noisy short-window probe sample cannot pollute the baseline or relax
-        cadence.
+        Tightens the interval when the computed level's target is SHORTER than
+        the current interval; otherwise leaves state untouched. It never relaxes
+        the interval and never appends to the baseline window, so the noisy
+        short-window probe sample cannot pollute the baseline or slow the cadence.
+
+        The guard is on the interval, NOT the level severity: decay hysteresis
+        can hold a tight interval at a calm level, so a rising level whose target
+        is still slower than the held interval (e.g. ELEVATED's target of 180min
+        while the interval is held at 30min) must not widen it back out.
         """
         volume_level = self._volume_level(rate)
         level = self._promote(volume_level) if radar_alert else volume_level
         radar_promoted = level is not volume_level
 
         previous_interval = self._current_interval
-        if level.severity <= self._current_level.severity:
+        target = max(
+            self.config.min_interval_minutes,
+            min(self._target_interval(level), self._ceiling),
+        )
+        if target >= self._current_interval:
             return CadenceDecision(
                 previous_interval=previous_interval,
                 new_interval=previous_interval,
@@ -301,10 +312,7 @@ class AdaptiveCadenceController:
             )
 
         self._current_level = level
-        self._current_interval = max(
-            self.config.min_interval_minutes,
-            min(self._target_interval(level), self._ceiling),
-        )
+        self._current_interval = target
         # A probe escalation means news is rising again: reset the calm streak so
         # the next full run cannot immediately decay off a stale streak (which is
         # what produced the decay/re-escalate flapping).

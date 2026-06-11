@@ -395,6 +395,26 @@ class TestConsiderEscalation:
         assert decision.changed is False
         assert controller.current_interval == 5  # not relaxed
 
+    def test_does_not_relax_when_level_rises_below_held_interval(
+        self, cadence_config: Config
+    ) -> None:
+        """Test a rising level does not WIDEN an interval held tight by hysteresis.
+
+        Regression: a full run can hold interval=5 at a NORMAL level (decay
+        hysteresis). An ELEVATED probe reading (target 15 > 5) must not relax the
+        cadence back out to 15 and post a bogus "calming" notice.
+        """
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+        controller._current_interval = 5  # held tight
+        controller._current_level = IntensityLevel.NORMAL  # but level is calm
+
+        decision = controller.consider_escalation(2.0)  # ELEVATED, target 15
+
+        assert decision.changed is False
+        assert decision.reason is None
+        assert controller.current_interval == 5  # not widened
+
     def test_does_not_append_to_window(self, cadence_config: Config) -> None:
         """Test the probe does not pollute the baseline window."""
         controller = AdaptiveCadenceController(cadence_config)
@@ -482,6 +502,22 @@ class TestDecayHysteresis:
         after = controller.record_and_compute(1.0)
         assert after.changed is False
         assert after.new_interval == 5
+
+    def test_decay_needs_fresh_streak_for_each_step(self, cadence_config: Config) -> None:
+        """Test each decay step re-earns calm_streak_runs calm runs (slow decay).
+
+        With calm_streak_runs=2 the interval steps up only every other calm run,
+        not on every run, so the climb back toward the baseline stays gradual.
+        """
+        controller = AdaptiveCadenceController(cadence_config)  # calm_streak_runs=2
+        self._seed_baseline(controller)
+        controller._current_interval = 5
+        controller._current_level = IntensityLevel.SURGE
+
+        changed = [controller.record_and_compute(1.0).changed for _ in range(4)]
+
+        # hold, decay, hold, decay — one step per two calm runs.
+        assert changed == [False, True, False, True]
 
     def test_elevated_does_not_decay_on_its_own(self, cadence_config: Config) -> None:
         """Test an ELEVATED reading holds the tighter interval and resets calm."""
