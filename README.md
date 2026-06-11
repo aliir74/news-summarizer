@@ -113,7 +113,7 @@ By default the bot summarizes on a flat interval (`SUMMARY_INTERVAL_MINUTES`). Y
 
 - **Escalation is immediate.** When the rate spikes above the baseline (a war breaks out, a major event) or a Cloudflare Radar internet outage fires, the interval shortens at once, down to `min_interval_minutes` at a full surge.
 - **Two-gate level test.** A level requires BOTH a ratio (rate vs the rolling median baseline) AND an absolute message-rate floor. The floor stops ordinary traffic (a few messages over the window) from clearing the 4x ratio against a near-zero baseline and reading as a false surge.
-- **Decay is gradual and silent.** As things calm, the interval grows back by `decay_factor` each quiet run, never overshooting `SUMMARY_INTERVAL_MINUTES` (the steady-state baseline) unless you set `max_interval_minutes` higher.
+- **Decay is silent and steps back in meaningful jumps.** As things calm, the interval grows by `decay_factor` (default 2.0, i.e. doubling: 30→60→120→240→360) per decay step, never overshooting `SUMMARY_INTERVAL_MINUTES` (the steady-state baseline) unless you set `max_interval_minutes` higher.
 - **Notices only on a genuine surge onset.** A one-line Persian notice is posted only when the cadence tightens out of a calm NORMAL state. Decay and mid-event re-escalation reschedule silently, so the channel is never spammed with contradictory "calming"/"rising" notices.
 - **Optional cold-start probe.** With `fast_escalation: true`, a cheap probe runs every `probe_interval_minutes`, counting messages with no LLM call, and can tighten the cadence between full summary runs. It can only escalate, never relax.
 
@@ -129,7 +129,7 @@ adaptive_cadence:
   surge_ratio: 4.0           # >= 4x baseline => min_interval (also needs surge_floor_rate)
   elevated_floor_rate: 0.75  # Absolute min rate (msg/min) to reach ELEVATED
   surge_floor_rate: 1.5      # Absolute min rate (msg/min) to reach SURGE
-  decay_factor: 1.5          # Interval growth per calm run
+  decay_factor: 2.0          # Interval growth per decay step (doubling: 30->60->120)
   min_baseline_rate: 0.1     # Baseline floor, in messages per minute
   fast_escalation: false     # Cheap escalate-only probe between runs
   probe_interval_minutes: 5

@@ -71,7 +71,7 @@ class AdaptiveCadenceConfig:
     # genuine Iran news event drives these channels well past 1.5 msg/min.
     elevated_floor_rate: float = 0.75  # absolute min rate to reach ELEVATED
     surge_floor_rate: float = 1.5  # absolute min rate to reach SURGE
-    decay_factor: float = 1.5  # Multiply interval by this per calm run when decaying
+    decay_factor: float = 2.0  # Multiply interval by this per decay step (e.g. 30->60->120)
     calm_streak_runs: int = 2  # Consecutive NORMAL full-runs required before decaying
     min_baseline_rate: float = 0.1  # Floor for the baseline rate (messages per minute)
     fast_escalation: bool = False  # Run the cheap escalation probe between summary runs

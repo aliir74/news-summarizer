@@ -313,6 +313,31 @@ class TestRecordAndCompute:
         assert max(intervals) == 30  # baseline ceiling
         assert all(i <= 30 for i in intervals)
 
+    def test_decay_doubles_each_step_to_baseline(self, cadence_config: Config) -> None:
+        """Decay steps roughly double (30->60->120->240->360), not crawl by ~25%.
+
+        Production uses decay_factor=2.0 so a surge unwinds in a few big steps
+        instead of a dozen 30->38-style micro-steps.
+        """
+        config = replace(
+            cadence_config,
+            summary_interval_minutes=360,
+            adaptive_cadence=replace(
+                cadence_config.adaptive_cadence,
+                min_interval_minutes=30,
+                decay_factor=2.0,
+                calm_streak_runs=1,  # isolate the decay-step math
+            ),
+        )
+        controller = AdaptiveCadenceController(config)
+        self._seed_baseline(controller)
+        controller._current_interval = 30
+        controller._current_level = IntensityLevel.SURGE
+
+        intervals = [controller.record_and_compute(1.0).new_interval for _ in range(5)]
+
+        assert intervals == [60, 120, 240, 360, 360]
+
     def test_never_below_min_interval(self, cadence_config: Config) -> None:
         """Test the interval floor is honored."""
         controller = AdaptiveCadenceController(cadence_config)
