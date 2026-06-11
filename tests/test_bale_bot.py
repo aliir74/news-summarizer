@@ -1,5 +1,6 @@
 """Tests for the Bale bot module."""
 
+import asyncio
 import json
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -614,3 +615,48 @@ class TestBaleBotRetryQueue:
             assert len(bot._queue) == 1
             assert bot._queue[0]["text"] == "added during flush"
             await bot.stop()
+
+
+class TestBaleBotCoverage:
+    """Tests for Bale error paths and the retry loop body (coverage)."""
+
+    async def test_save_queue_handles_os_error(
+        self, bot: BaleBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OSError while saving the retry queue is swallowed with a warning."""
+        fake_path = MagicMock()
+        fake_path.write_text.side_effect = OSError("disk full")
+        monkeypatch.setattr("src.bale_bot.BALE_QUEUE_FILE", fake_path)
+
+        bot._queue = [{"text": "x", "queued_at": datetime.now().isoformat()}]
+        bot._save_queue()  # Should not raise.
+
+        fake_path.write_text.assert_called_once()
+
+    async def test_is_healthy_returns_false_on_exception(self, bot: BaleBot) -> None:
+        """A network error during the health check reports unhealthy."""
+        await bot.start()
+        with patch.object(
+            bot._client, "get", new_callable=AsyncMock, side_effect=httpx.HTTPError("down")
+        ):
+            healthy = await bot._is_healthy()
+        await bot.stop()
+
+        assert healthy is False
+
+    async def test_retry_loop_flushes_when_queue_nonempty(self, bot: BaleBot) -> None:
+        """The retry loop sleeps, then flushes a non-empty queue each tick."""
+        bot._queue = [{"text": "x", "queued_at": datetime.now().isoformat()}]
+
+        with (
+            patch(
+                "src.bale_bot.asyncio.sleep",
+                new_callable=AsyncMock,
+                side_effect=[None, asyncio.CancelledError()],
+            ),
+            patch.object(bot, "_flush_queue", new_callable=AsyncMock) as mock_flush,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await bot._retry_loop()
+
+        mock_flush.assert_awaited_once()

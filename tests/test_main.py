@@ -1,6 +1,7 @@
 """Tests for the main module."""
 
 import json
+import runpy
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,10 +9,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src import main as main_module
+from src.cadence import CadenceChangeReason, CadenceDecision, IntensityLevel
 from src.composite_writer import CompositeOutputWriter
-from src.config import Config
+from src.config import (
+    Config,
+    ConfigError,
+    DeduplicationConfig,
+)
 from src.file_writer import FileWriter
-from src.main import MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer
+from src.main import MAX_SEEN_URLS, SEEN_URLS_FILE, NewsSummarizer, main
 from src.models import Message
 from src.telegram_bot import TelegramBot
 
@@ -926,3 +933,362 @@ class TestTestMode:
         """Test that only TelegramBot is used when Bale is not configured."""
         summarizer = NewsSummarizer(sample_config)
         assert isinstance(summarizer.output_writer, TelegramBot)
+
+
+@pytest.fixture
+def dedup_config(sample_config: Config) -> Config:
+    """Return a config with deduplication enabled."""
+    return replace(sample_config, deduplication=DeduplicationConfig(enabled=True))
+
+
+class TestRadarLifecycle:
+    """Tests for the Cloudflare Radar monitor lifecycle in NewsSummarizer."""
+
+    def test_radar_monitor_created_when_enabled_with_token(
+        self, radar_config: Config
+    ) -> None:
+        """The radar monitor is created when enabled and a token is present."""
+        summarizer = NewsSummarizer(radar_config)
+        assert summarizer.radar_monitor is not None
+
+    def test_radar_monitor_skipped_without_token(self, radar_config: Config) -> None:
+        """The radar monitor is skipped (with a warning) when no token is set."""
+        config = replace(radar_config, cloudflare_api_token=None)
+        summarizer = NewsSummarizer(config)
+        assert summarizer.radar_monitor is None
+
+    async def test_start_and_stop_with_radar(self, radar_config: Config) -> None:
+        """start()/stop() drive the radar monitor and schedule its job."""
+        summarizer = NewsSummarizer(radar_config)
+        assert summarizer.radar_monitor is not None
+
+        with (
+            patch.object(summarizer.telegram_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "start", new_callable=AsyncMock),
+            patch.object(summarizer.telegram_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.radar_monitor, "start", new_callable=AsyncMock) as mock_start,
+            patch.object(summarizer.radar_monitor, "stop", new_callable=AsyncMock) as mock_stop,
+        ):
+            await summarizer.start()
+            job = summarizer.scheduler.get_job("check_radar")
+            await summarizer.stop()
+
+        assert job is not None
+        mock_start.assert_awaited_once()
+        mock_stop.assert_awaited_once()
+
+    async def test_check_radar_job_posts_alerts(self, radar_config: Config) -> None:
+        """The radar job posts each alert and flags a recent radar alert."""
+        summarizer = NewsSummarizer(radar_config)
+        assert summarizer.radar_monitor is not None
+        alert = MagicMock()
+        alert.message = "outage"
+        alert.alert_type = MagicMock()
+        alert.alert_type.value = "CLOUDFLARE_ANOMALY"
+
+        with (
+            patch.object(
+                summarizer.radar_monitor,
+                "check_all",
+                new_callable=AsyncMock,
+                return_value=[alert],
+            ),
+            patch.object(
+                summarizer.output_writer,
+                "post_alert",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_post,
+        ):
+            await summarizer._check_radar_job()
+
+        mock_post.assert_awaited_once_with("outage")
+        assert summarizer._recent_radar_alert is True
+
+    async def test_check_radar_job_logs_post_failure(self, radar_config: Config) -> None:
+        """A failed alert post is logged but does not raise."""
+        summarizer = NewsSummarizer(radar_config)
+        assert summarizer.radar_monitor is not None
+        alert = MagicMock()
+        alert.message = "outage"
+        alert.alert_type = MagicMock()
+        alert.alert_type.value = "CLOUDFLARE_ANOMALY"
+
+        with (
+            patch.object(
+                summarizer.radar_monitor,
+                "check_all",
+                new_callable=AsyncMock,
+                return_value=[alert],
+            ),
+            patch.object(
+                summarizer.output_writer,
+                "post_alert",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await summarizer._check_radar_job()
+
+        # A failed post must not flag a radar alert (the loop still completes).
+        assert summarizer._recent_radar_alert is True
+
+    async def test_check_radar_job_no_alerts(self, radar_config: Config) -> None:
+        """With no alerts the radar flag stays unset."""
+        summarizer = NewsSummarizer(radar_config)
+        assert summarizer.radar_monitor is not None
+
+        with patch.object(
+            summarizer.radar_monitor,
+            "check_all",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await summarizer._check_radar_job()
+
+        assert summarizer._recent_radar_alert is False
+
+    async def test_check_radar_job_handles_exception(self, radar_config: Config) -> None:
+        """An exception in the radar job is caught and logged."""
+        summarizer = NewsSummarizer(radar_config)
+        assert summarizer.radar_monitor is not None
+
+        with patch.object(
+            summarizer.radar_monitor,
+            "check_all",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
+        ):
+            await summarizer._check_radar_job()  # Should not raise.
+
+    async def test_check_radar_job_noop_without_monitor(
+        self, news_summarizer: NewsSummarizer
+    ) -> None:
+        """The radar job is a no-op when no monitor is configured."""
+        assert news_summarizer.radar_monitor is None
+        await news_summarizer._check_radar_job()  # Should not raise.
+
+
+class TestDeduplicationLifecycle:
+    """Tests for the deduplicator lifecycle and summarize-job integration."""
+
+    async def test_start_and_stop_with_deduplication(self, dedup_config: Config) -> None:
+        """start()/stop() initialize and tear down the deduplicator."""
+        summarizer = NewsSummarizer(dedup_config)
+
+        with (
+            patch.object(summarizer.telegram_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "start", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "start", new_callable=AsyncMock),
+            patch.object(summarizer.telegram_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.rss_reader, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.output_writer, "stop", new_callable=AsyncMock),
+            patch.object(summarizer.deduplicator, "start") as mock_start,
+            patch.object(summarizer.deduplicator, "stop") as mock_stop,
+        ):
+            await summarizer.start()
+            await summarizer.stop()
+
+        mock_start.assert_called_once()
+        mock_stop.assert_called_once()
+
+    async def test_summarize_job_runs_deduplication(
+        self, dedup_config: Config, sample_summary: MagicMock
+    ) -> None:
+        """The summarize job deduplicates and cleans up when enabled."""
+        summarizer = NewsSummarizer(dedup_config)
+        messages = [_iran_msg()]
+
+        with (
+            patch.object(
+                summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=messages,
+            ),
+            patch.object(
+                summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(
+                summarizer.deduplicator, "process_messages", return_value=messages
+            ) as mock_process,
+            patch.object(summarizer.deduplicator, "cleanup", return_value=3) as mock_cleanup,
+            patch.object(summarizer.summarizer, "summarize_news", return_value=sample_summary),
+            patch.object(
+                summarizer.output_writer,
+                "post_summary",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            await summarizer._summarize_job()
+
+        mock_process.assert_called_once()
+        mock_cleanup.assert_called_once()
+
+
+class TestSummarizeJobErrorPaths:
+    """Tests for the summarize-job error and failure branches."""
+
+    async def test_logs_when_post_summary_fails(
+        self, news_summarizer: NewsSummarizer, sample_summary: MagicMock
+    ) -> None:
+        """A failed summary post is logged as an error."""
+        with (
+            patch.object(
+                news_summarizer.telegram_reader,
+                "get_all_channel_updates",
+                new_callable=AsyncMock,
+                return_value=[_iran_msg()],
+            ),
+            patch.object(
+                news_summarizer.rss_reader,
+                "get_all_feed_updates",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(
+                news_summarizer.summarizer, "summarize_news", return_value=sample_summary
+            ),
+            patch.object(
+                news_summarizer.output_writer,
+                "post_summary",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_post,
+        ):
+            await news_summarizer._summarize_job()
+
+        mock_post.assert_awaited_once()
+
+    async def test_summarize_job_handles_exception(
+        self, news_summarizer: NewsSummarizer
+    ) -> None:
+        """An exception inside the summarize job is caught and logged."""
+        with patch.object(
+            news_summarizer.telegram_reader,
+            "get_all_channel_updates",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
+        ):
+            await news_summarizer._summarize_job()  # Should not raise.
+
+    async def test_probe_job_handles_exception(self, cadence_config: Config) -> None:
+        """An exception inside the probe job is caught and logged."""
+        cfg = replace(cadence_config)
+        cfg.adaptive_cadence.fast_escalation = True
+        summarizer = NewsSummarizer(cfg)
+
+        with patch.object(
+            summarizer.telegram_reader,
+            "get_all_channel_updates",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
+        ):
+            await summarizer._probe_intensity_job()  # Should not raise.
+
+    async def test_post_cadence_notice_logs_failure(
+        self, cadence_config: Config
+    ) -> None:
+        """A failed cadence-notice post is logged as an error."""
+        summarizer = NewsSummarizer(cadence_config)
+        decision = CadenceDecision(
+            previous_interval=30,
+            new_interval=5,
+            level=IntensityLevel.SURGE,
+            reason=CadenceChangeReason.NEWS_VOLUME,
+        )
+
+        with patch.object(
+            summarizer.output_writer,
+            "post_alert",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_post:
+            await summarizer._post_cadence_notice(decision)
+
+        mock_post.assert_awaited_once()
+
+
+class TestStateSaveErrors:
+    """Tests for OSError handling when persisting state."""
+
+    def test_save_last_check_handles_os_error(
+        self, news_summarizer: NewsSummarizer
+    ) -> None:
+        """An OSError while saving the last-check timestamp is swallowed."""
+        fake_path = MagicMock()
+        fake_path.write_text.side_effect = OSError("disk full")
+        news_summarizer._state_file = fake_path
+        news_summarizer._last_check = datetime(2024, 1, 15, 11, 0)
+
+        news_summarizer._save_last_check()  # Should not raise.
+
+        fake_path.write_text.assert_called_once()
+
+    def test_save_seen_urls_handles_os_error(
+        self, news_summarizer: NewsSummarizer
+    ) -> None:
+        """An OSError while saving seen URLs is swallowed."""
+        fake_path = MagicMock()
+        fake_path.write_text.side_effect = OSError("disk full")
+        news_summarizer._seen_urls = {"https://example.com/a"}
+
+        with patch("src.main.SEEN_URLS_FILE", fake_path):
+            news_summarizer._save_seen_urls()  # Should not raise.
+
+        fake_path.write_text.assert_called_once()
+
+
+class TestMainEntrypoint:
+    """Tests for the module-level main() coroutine and __main__ guard."""
+
+    async def test_main_exits_on_config_error(self) -> None:
+        """A ConfigError aborts startup with a non-zero exit."""
+        with (
+            patch.object(Config, "from_env", side_effect=ConfigError("bad config")),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await main()
+
+        assert exc_info.value.code == 1
+
+    async def test_main_starts_and_stops(self, sample_config: Config) -> None:
+        """main() builds the summarizer, starts it, waits, then stops it."""
+        no_sources = replace(sample_config, channels=[], rss_feeds=[])
+        mock_event = MagicMock()
+        mock_event.wait = AsyncMock()
+        mock_loop = MagicMock()
+        mock_summarizer = MagicMock()
+        mock_summarizer.start = AsyncMock()
+        mock_summarizer.stop = AsyncMock()
+
+        with (
+            patch.object(Config, "from_env", return_value=no_sources),
+            patch.object(main_module, "NewsSummarizer", return_value=mock_summarizer),
+            patch("src.main.asyncio.get_running_loop", return_value=mock_loop),
+            patch("src.main.asyncio.Event", return_value=mock_event),
+        ):
+            await main_module.main()
+
+        mock_summarizer.start.assert_awaited_once()
+        mock_summarizer.stop.assert_awaited_once()
+        mock_event.wait.assert_awaited_once()
+
+        # Drive the registered signal handler so its body is exercised.
+        handler = mock_loop.add_signal_handler.call_args.args[1]
+        handler()
+        mock_event.set.assert_called_once()
+
+    def test_main_module_entrypoint(self) -> None:
+        """Running the module as __main__ invokes asyncio.run(main())."""
+        with patch("asyncio.run") as mock_run:
+            runpy.run_module("src.main", run_name="__main__")
+
+        mock_run.assert_called_once()

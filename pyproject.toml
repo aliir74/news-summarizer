@@ -38,7 +38,9 @@ exclude = ["tests", ".venv"]
 # Pyrogram doesn't have complete type stubs
 reportMissingImports = false
 reportPrivateImportUsage = false
-reportGeneralTypeIssues = "warning"
+# Enforced as errors so type regressions fail CI; the one known
+# Pyrogram-stub false positive is suppressed at its call site.
+reportGeneralTypeIssues = "error"
 
 [tool.ruff]
 target-version = "py311"

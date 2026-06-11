@@ -55,7 +55,11 @@ class TelegramReader:
             chat = await self.client.get_chat(channel)
             chat_title = getattr(chat, "title", channel)
 
-            async for msg in self.client.get_chat_history(channel, limit=limit):
+            # Pyrogram's stub types get_chat_history as a coroutine, but at
+            # runtime it is an async generator; the stub is incomplete.
+            async for msg in self.client.get_chat_history(  # pyright: ignore[reportGeneralTypeIssues]
+                channel, limit=limit
+            ):
                 # Stop if we've reached messages older than since
                 if msg.date and msg.date < since:
                     break

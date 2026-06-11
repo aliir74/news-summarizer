@@ -122,6 +122,39 @@ class TestTelegramBot:
             assert call_kwargs["parse_mode"] == ParseMode.HTML
 
 
+class TestPostAlert:
+    """Tests for posting alert messages."""
+
+    async def test_post_alert_success(self, bot: TelegramBot) -> None:
+        """Test successful alert posting."""
+        with patch("src.telegram_bot.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.send_message = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            await bot.start()
+            result = await bot.post_alert("internet outage detected")
+
+        assert result is True
+        mock_client.send_message.assert_called_once()
+        call_kwargs = mock_client.send_message.call_args.kwargs
+        assert call_kwargs["parse_mode"] == ParseMode.HTML
+
+    async def test_post_alert_failure(self, bot: TelegramBot) -> None:
+        """Test that a failed alert post returns False."""
+        with patch("src.telegram_bot.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.send_message = AsyncMock(side_effect=Exception("API Error"))
+            mock_client_class.return_value = mock_client
+
+            await bot.start()
+            result = await bot.post_alert("alert text")
+
+        assert result is False
+
+
 class TestLongSummary:
     """Tests for posting long summaries."""
 

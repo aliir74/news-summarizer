@@ -686,3 +686,55 @@ class TestBaleConfig:
         assert config.bale_bot_token == "bale_token"
         assert config.bale_channel_id == "@bale_channel"
         assert config.bale_enabled is True
+
+
+class TestConfigCoverage:
+    """Tests for config branches missed elsewhere (coverage completeness)."""
+
+    def _set_required_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Set the six required environment variables."""
+        monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+        monkeypatch.setenv("TELEGRAM_API_HASH", "test_hash")
+        monkeypatch.setenv("TELEGRAM_SESSION_STRING", "test_session")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test_token")
+        monkeypatch.setenv("OUTPUT_CHANNEL_ID", "@test_channel")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test_key")
+
+    @patch("src.config.load_dotenv")
+    def test_test_mode_prefers_test_channels_file(
+        self, _mock_dotenv: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """In test mode, config/channels.test.yaml is preferred when present."""
+        self._set_required_env(monkeypatch)
+        monkeypatch.setenv("TEST_MODE", "true")
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "channels.test.yaml").write_text("channels:\n  - test_channel\n")
+        (config_dir / "channels.yaml").write_text("channels:\n  - prod_channel\n")
+        monkeypatch.chdir(tmp_path)
+
+        config = Config.from_env()
+
+        assert config.channels == ["test_channel"]
+
+    @patch("src.config.load_dotenv")
+    def test_test_mode_falls_back_to_default_channels_file(
+        self, _mock_dotenv: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """In test mode with no test file, config/channels.yaml is used."""
+        self._set_required_env(monkeypatch)
+        monkeypatch.setenv("TEST_MODE", "true")
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "channels.yaml").write_text("channels:\n  - prod_channel\n")
+        monkeypatch.chdir(tmp_path)
+
+        config = Config.from_env()
+
+        assert config.channels == ["prod_channel"]
+
+    def test_load_sources_yaml_raises_on_os_error(self, tmp_path: Path) -> None:
+        """An unreadable sources file raises ConfigError."""
+        missing = tmp_path / "does_not_exist.yaml"
+        with pytest.raises(ConfigError, match="Could not read sources file"):
+            _load_sources_yaml(missing)
