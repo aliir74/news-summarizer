@@ -217,6 +217,10 @@ def cadence_config(sample_config: Config) -> Config:
             baseline_window=5,
             elevated_ratio=2.0,
             surge_ratio=4.0,
+            # Absolute floors disabled here so the ratio-logic tests can exercise
+            # small rates; the floors get their own dedicated tests/fixtures.
+            elevated_floor_rate=0.0,
+            surge_floor_rate=0.0,
             decay_factor=1.5,
             min_baseline_rate=0.1,
         ),

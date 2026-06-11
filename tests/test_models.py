@@ -317,7 +317,11 @@ class TestBuildCadenceNotice:
         level: IntensityLevel = IntensityLevel.ELEVATED,
     ) -> CadenceDecision:
         return CadenceDecision(
-            previous_interval=previous, new_interval=new, level=level, reason=reason
+            previous_interval=previous,
+            new_interval=new,
+            level=level,
+            reason=reason,
+            previous_level=IntensityLevel.NORMAL,
         )
 
     def test_news_volume_escalation(self) -> None:
@@ -379,6 +383,7 @@ class TestBuildCadenceNotice:
             new_interval=30,
             level=IntensityLevel.NORMAL,
             reason=None,
+            previous_level=IntensityLevel.NORMAL,
         )
 
         with pytest.raises(ValueError):

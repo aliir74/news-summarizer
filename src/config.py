@@ -64,7 +64,14 @@ class AdaptiveCadenceConfig:
     baseline_window: int = 10  # Number of recent rate samples kept for the baseline
     elevated_ratio: float = 2.0  # rate >= elevated_ratio * baseline => ELEVATED
     surge_ratio: float = 4.0  # rate >= surge_ratio * baseline => SURGE
-    decay_factor: float = 1.5  # Multiply interval by this per calm run when decaying
+    # Absolute message-rate floors (messages per minute) that a rate must ALSO
+    # clear to reach a level, on top of the ratio test. Without them the ratio
+    # alone, judged against a near-zero floored baseline, turns ordinary traffic
+    # (a few messages over the window) into a "surge" and the cadence flaps. A
+    # genuine Iran news event drives these channels well past 1.5 msg/min.
+    elevated_floor_rate: float = 0.75  # absolute min rate to reach ELEVATED
+    surge_floor_rate: float = 1.5  # absolute min rate to reach SURGE
+    decay_factor: float = 2.0  # Multiply interval by this per decay step (e.g. 30->60->120)
     calm_streak_runs: int = 2  # Consecutive NORMAL full-runs required before decaying
     min_baseline_rate: float = 0.1  # Floor for the baseline rate (messages per minute)
     fast_escalation: bool = False  # Run the cheap escalation probe between summary runs
@@ -97,6 +104,15 @@ class AdaptiveCadenceConfig:
         # which prevents the decay/re-escalate flapping during a bursty surge.
         if self.calm_streak_runs < 1:
             raise ConfigError("adaptive_cadence.calm_streak_runs must be >= 1")
+        # The absolute floors must be non-negative and correctly ordered: the
+        # surge floor cannot sit below the elevated floor, or a rate could clear
+        # SURGE while failing ELEVATED.
+        if self.elevated_floor_rate < 0:
+            raise ConfigError("adaptive_cadence.elevated_floor_rate must be >= 0")
+        if self.surge_floor_rate < self.elevated_floor_rate:
+            raise ConfigError(
+                "adaptive_cadence.surge_floor_rate must be >= elevated_floor_rate"
+            )
 
 
 @dataclass
@@ -374,6 +390,12 @@ def _load_sources_yaml(
                     raw_cadence.get("elevated_ratio", defaults.elevated_ratio)
                 ),
                 surge_ratio=float(raw_cadence.get("surge_ratio", defaults.surge_ratio)),
+                elevated_floor_rate=float(
+                    raw_cadence.get("elevated_floor_rate", defaults.elevated_floor_rate)
+                ),
+                surge_floor_rate=float(
+                    raw_cadence.get("surge_floor_rate", defaults.surge_floor_rate)
+                ),
                 decay_factor=float(raw_cadence.get("decay_factor", defaults.decay_factor)),
                 calm_streak_runs=int(
                     raw_cadence.get("calm_streak_runs", defaults.calm_streak_runs)

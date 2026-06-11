@@ -1203,6 +1203,7 @@ class TestSummarizeJobErrorPaths:
             new_interval=5,
             level=IntensityLevel.SURGE,
             reason=CadenceChangeReason.NEWS_VOLUME,
+            previous_level=IntensityLevel.NORMAL,
         )
 
         with patch.object(
