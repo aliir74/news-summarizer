@@ -1,5 +1,6 @@
 """Tests for the adaptive cadence controller."""
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -204,6 +205,48 @@ class TestComputeLevel:
         level = controller._compute_level(0.05, radar_alert=False)
 
         assert level == IntensityLevel.NORMAL
+
+    def _config_with_floors(self, cadence_config: Config) -> Config:
+        """Return a config whose level floors match production (0.75 / 1.5)."""
+        return replace(
+            cadence_config,
+            adaptive_cadence=replace(
+                cadence_config.adaptive_cadence,
+                elevated_floor_rate=0.75,
+                surge_floor_rate=1.5,
+            ),
+        )
+
+    def test_absolute_floor_blocks_false_surge(self, cadence_config: Config) -> None:
+        """A rate clearing the ratio but below the surge floor is not a SURGE.
+
+        Reproduces the VPS noise: against a near-zero floored baseline (0.1),
+        0.4 msg/min clears the 4x surge ratio but is ordinary traffic, so the
+        1.5 msg/min surge floor must keep it out of SURGE.
+        """
+        controller = AdaptiveCadenceController(self._config_with_floors(cadence_config))
+        controller._rate_window = [0.0, 0.0, 0.0]  # baseline floored to 0.1
+
+        # 0.4 / 0.1 = 4.0 clears surge_ratio, but 0.4 < surge_floor_rate (1.5)
+        # and 0.4 < elevated_floor_rate (0.75) => NORMAL.
+        assert controller._compute_level(0.4, radar_alert=False) == IntensityLevel.NORMAL
+
+    def test_absolute_floor_degrades_surge_to_elevated(self, cadence_config: Config) -> None:
+        """A rate past the surge ratio + elevated floor but below the surge floor is ELEVATED."""
+        controller = AdaptiveCadenceController(self._config_with_floors(cadence_config))
+        controller._rate_window = [0.25, 0.25, 0.25]  # baseline floored to 0.25
+
+        # 1.0 / 0.25 = 4.0 clears surge_ratio, but 1.0 < surge_floor_rate (1.5)
+        # while 1.0 >= elevated_floor_rate (0.75) => ELEVATED.
+        assert controller._compute_level(1.0, radar_alert=False) == IntensityLevel.ELEVATED
+
+    def test_genuine_surge_clears_ratio_and_floor(self, cadence_config: Config) -> None:
+        """A high-volume event clearing both the surge ratio and floor is a SURGE."""
+        controller = AdaptiveCadenceController(self._config_with_floors(cadence_config))
+        controller._rate_window = [0.5, 0.5, 0.5]  # baseline 0.5
+
+        # 2.0 / 0.5 = 4.0 clears surge_ratio and 2.0 >= surge_floor_rate (1.5).
+        assert controller._compute_level(2.0, radar_alert=False) == IntensityLevel.SURGE
 
     def test_radar_promotes_one_level(self, cadence_config: Config) -> None:
         """Test a radar outage flag bumps the level up by one step."""
@@ -563,3 +606,93 @@ class TestDecayHysteresis:
         assert elevated.changed is False  # not an escalation, not a decay
         assert controller.current_interval == 5  # held
         assert controller._calm_streak == 0  # reset; not calm
+
+
+class TestSurgeOnset:
+    """Tests for CadenceDecision.is_surge_onset and previous_level tracking."""
+
+    def _seed_baseline(self, controller: AdaptiveCadenceController) -> None:
+        """Seed a baseline rate of 1.0 messages per minute."""
+        controller._rate_window = [1.0, 1.0, 1.0, 1.0, 1.0]
+
+    def test_onset_true_when_escalating_from_normal(self) -> None:
+        """A volume escalation out of a NORMAL state is a surge onset."""
+        decision = CadenceDecision(
+            previous_interval=30,
+            new_interval=5,
+            level=IntensityLevel.SURGE,
+            reason=CadenceChangeReason.NEWS_VOLUME,
+            previous_level=IntensityLevel.NORMAL,
+        )
+
+        assert decision.is_surge_onset is True
+
+    def test_onset_true_for_radar_outage_from_normal(self) -> None:
+        """A radar-driven escalation out of NORMAL is also an onset."""
+        decision = CadenceDecision(
+            previous_interval=30,
+            new_interval=15,
+            level=IntensityLevel.ELEVATED,
+            reason=CadenceChangeReason.RADAR_OUTAGE,
+            previous_level=IntensityLevel.NORMAL,
+        )
+
+        assert decision.is_surge_onset is True
+
+    def test_onset_false_for_decay(self) -> None:
+        """A calm-decay step is never announced as an onset."""
+        decision = CadenceDecision(
+            previous_interval=30,
+            new_interval=45,
+            level=IntensityLevel.NORMAL,
+            reason=CadenceChangeReason.CALM_DECAY,
+            previous_level=IntensityLevel.NORMAL,
+        )
+
+        assert decision.is_surge_onset is False
+
+    def test_onset_false_when_already_elevated(self) -> None:
+        """Re-escalation while an event is already underway is silent."""
+        decision = CadenceDecision(
+            previous_interval=15,
+            new_interval=5,
+            level=IntensityLevel.SURGE,
+            reason=CadenceChangeReason.NEWS_VOLUME,
+            previous_level=IntensityLevel.ELEVATED,
+        )
+
+        assert decision.is_surge_onset is False
+
+    def test_onset_false_when_interval_unchanged(self) -> None:
+        """A no-op decision is never an onset."""
+        decision = CadenceDecision(
+            previous_interval=30,
+            new_interval=30,
+            level=IntensityLevel.NORMAL,
+            reason=None,
+            previous_level=IntensityLevel.NORMAL,
+        )
+
+        assert decision.is_surge_onset is False
+
+    def test_record_and_compute_reports_previous_level(self, cadence_config: Config) -> None:
+        """record_and_compute carries the level held before this evaluation."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        first = controller.record_and_compute(4.0)  # NORMAL -> SURGE
+        assert first.previous_level is IntensityLevel.NORMAL
+        assert first.is_surge_onset is True
+
+        second = controller.record_and_compute(4.0)  # SURGE -> SURGE (held)
+        assert second.previous_level is IntensityLevel.SURGE
+
+    def test_consider_escalation_reports_previous_level(self, cadence_config: Config) -> None:
+        """The probe escalation also carries the prior level for onset gating."""
+        controller = AdaptiveCadenceController(cadence_config)
+        self._seed_baseline(controller)
+
+        decision = controller.consider_escalation(4.0)  # NORMAL -> SURGE
+
+        assert decision.previous_level is IntensityLevel.NORMAL
+        assert decision.is_surge_onset is True

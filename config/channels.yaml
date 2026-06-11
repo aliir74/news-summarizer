@@ -60,9 +60,10 @@ deduplication:
 # When enabled, the summary interval shortens as news intensity rises (a surge)
 # and decays back toward SUMMARY_INTERVAL_MINUTES as things calm. Intensity is a
 # pre-dedup filtered message RATE (messages per minute) judged against the
-# rolling median baseline; a Cloudflare Radar outage promotes one level. Every
-# interval change posts a Persian notice (reason + old-to-new interval) to the
-# output channels.
+# rolling median baseline AND an absolute floor; a Cloudflare Radar outage
+# promotes one level. Only a genuine surge ONSET (escalation out of a calm
+# NORMAL state) posts a Persian notice; decay and mid-event re-escalation
+# reschedule the cadence silently.
 adaptive_cadence:
   enabled: true            # Master switch; keep false to preserve fixed cadence
   min_interval_minutes: 30  # Floor cadence during a surge (vs 6h baseline)
@@ -70,6 +71,12 @@ adaptive_cadence:
   baseline_window: 10      # Recent rate samples kept for the baseline (median)
   elevated_ratio: 2.0      # rate >= elevated_ratio * baseline => ELEVATED (~half interval)
   surge_ratio: 4.0         # rate >= surge_ratio * baseline => SURGE (min_interval)
+  # Absolute message-rate floors (messages/min). A level needs BOTH its ratio AND
+  # its floor. Without these the ratio alone (against a near-zero baseline) reads
+  # ordinary traffic (~0.4 msg/min) as a surge and the cadence flaps all day. A
+  # real Iran news event pushes these channels well past 1.5 msg/min.
+  elevated_floor_rate: 0.75  # absolute min rate to reach ELEVATED
+  surge_floor_rate: 1.5      # absolute min rate to reach SURGE
   decay_factor: 1.25       # Small step per decay (gentle climb back toward baseline)
   calm_streak_runs: 3      # Consecutive NORMAL runs required for EACH decay step (slow decay)
   min_baseline_rate: 0.1   # Floor for the baseline rate, in MESSAGES PER MINUTE

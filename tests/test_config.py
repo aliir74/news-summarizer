@@ -281,6 +281,8 @@ class TestLoadSourcesYaml:
             "  baseline_window: 6\n"
             "  elevated_ratio: 1.8\n"
             "  surge_ratio: 3.5\n"
+            "  elevated_floor_rate: 0.5\n"
+            "  surge_floor_rate: 1.2\n"
             "  decay_factor: 2.0\n"
             "  calm_streak_runs: 3\n"
             "  min_baseline_rate: 0.25\n"
@@ -298,6 +300,8 @@ class TestLoadSourcesYaml:
         assert adaptive_cadence.baseline_window == 6
         assert adaptive_cadence.elevated_ratio == 1.8
         assert adaptive_cadence.surge_ratio == 3.5
+        assert adaptive_cadence.elevated_floor_rate == 0.5
+        assert adaptive_cadence.surge_floor_rate == 1.2
         assert adaptive_cadence.decay_factor == 2.0
         assert adaptive_cadence.calm_streak_runs == 3
         assert adaptive_cadence.min_baseline_rate == 0.25
@@ -384,6 +388,22 @@ class TestLoadSourcesYaml:
         """Test a probe window narrower than the run cadence is rejected."""
         with pytest.raises(ConfigError, match="probe_window_minutes"):
             AdaptiveCadenceConfig(probe_interval_minutes=10, probe_window_minutes=5)
+
+    def test_adaptive_cadence_rejects_negative_elevated_floor(self) -> None:
+        """Test a negative elevated_floor_rate is rejected."""
+        with pytest.raises(ConfigError, match="elevated_floor_rate"):
+            AdaptiveCadenceConfig(elevated_floor_rate=-0.1)
+
+    def test_adaptive_cadence_rejects_surge_floor_below_elevated_floor(self) -> None:
+        """Test surge_floor_rate below elevated_floor_rate is rejected."""
+        with pytest.raises(ConfigError, match="surge_floor_rate"):
+            AdaptiveCadenceConfig(elevated_floor_rate=1.0, surge_floor_rate=0.5)
+
+    def test_adaptive_cadence_parses_floor_rates(self) -> None:
+        """Test the absolute floor rates parse from a YAML adaptive_cadence block."""
+        defaults = AdaptiveCadenceConfig()
+        assert defaults.elevated_floor_rate == 0.75
+        assert defaults.surge_floor_rate == 1.5
 
     def test_invalid_cadence_yaml_propagates_config_error(self, tmp_path: Path) -> None:
         """Test an invalid adaptive_cadence block raises ConfigError on load."""

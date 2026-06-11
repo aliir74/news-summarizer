@@ -270,8 +270,10 @@ class NewsSummarizer:
                 logger.info("No new messages to summarize")
 
             # Tell subscribers why the rhythm changed (in Persian), after the
-            # summary so the notice never lands ahead of the news itself.
-            if cadence_decision is not None and cadence_decision.changed:
+            # summary so the notice never lands ahead of the news itself. Only a
+            # genuine surge onset is announced; decay and mid-event re-escalation
+            # reschedule the cadence silently (see CadenceDecision.is_surge_onset).
+            if cadence_decision is not None and cadence_decision.is_surge_onset:
                 await self._post_cadence_notice(cadence_decision)
 
             # Add new RSS article URLs to seen set (for deduplication)
@@ -373,7 +375,8 @@ class NewsSummarizer:
                     f"Probe escalated cadence to {decision.new_interval}min "
                     f"(level={controller.current_level.value}, rate={rate:.2f}/min)"
                 )
-                await self._post_cadence_notice(decision)
+                if decision.is_surge_onset:
+                    await self._post_cadence_notice(decision)
 
         except Exception as e:
             logger.error(f"Error in intensity probe job: {e}", exc_info=True)

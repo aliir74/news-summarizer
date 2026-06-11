@@ -63,11 +63,28 @@ class CadenceDecision:
     new_interval: int
     level: IntensityLevel
     reason: CadenceChangeReason | None
+    previous_level: IntensityLevel
 
     @property
     def changed(self) -> bool:
         """Return True when the interval actually moved."""
         return self.new_interval != self.previous_interval
+
+    @property
+    def is_surge_onset(self) -> bool:
+        """Return True when this is a genuine escalation out of a calm state.
+
+        Used to decide whether to announce the change to subscribers. Only the
+        moment a surge/elevation *begins* from NORMAL is worth a notice: decay
+        (CALM_DECAY) and re-escalations while an event is already underway
+        (previous_level already ELEVATED/SURGE) adjust the interval silently, so
+        the channel is not spammed with contradictory "calming"/"rising" notes.
+        """
+        return (
+            self.changed
+            and self.reason in (CadenceChangeReason.NEWS_VOLUME, CadenceChangeReason.RADAR_OUTAGE)
+            and self.previous_level is IntensityLevel.NORMAL
+        )
 
 
 class AdaptiveCadenceController:
@@ -157,14 +174,22 @@ class AdaptiveCadenceController:
         return max(statistics.median(self._rate_window), floor)
 
     def _volume_level(self, rate: float) -> IntensityLevel:
-        """Map a message rate to an intensity level from the volume ratio alone."""
+        """Map a message rate to an intensity level from the volume ratio.
+
+        A level requires BOTH the ratio test (rate vs the rolling baseline) AND
+        an absolute message-rate floor. The floor stops a trickle of messages
+        judged against a near-zero floored baseline from registering as a surge:
+        ordinary traffic of a few messages over the window clears the 4x ratio
+        but not the 1.5 msg/min surge floor, so it stays NORMAL and the cadence
+        no longer flaps.
+        """
         # With no baseline history we cannot judge a surge from volume alone.
         if not self._rate_window:
             return IntensityLevel.NORMAL
         ratio = rate / self._baseline()
-        if ratio >= self.config.surge_ratio:
+        if ratio >= self.config.surge_ratio and rate >= self.config.surge_floor_rate:
             return IntensityLevel.SURGE
-        if ratio >= self.config.elevated_ratio:
+        if ratio >= self.config.elevated_ratio and rate >= self.config.elevated_floor_rate:
             return IntensityLevel.ELEVATED
         return IntensityLevel.NORMAL
 
@@ -227,6 +252,7 @@ class AdaptiveCadenceController:
         the ceiling). The level is computed over the existing window BEFORE the
         new rate is appended so a spike does not damp its own surge signal.
         """
+        previous_level = self._current_level
         volume_level = self._volume_level(rate)
         level = self._promote(volume_level) if radar_alert else volume_level
         radar_promoted = level is not volume_level
@@ -277,6 +303,7 @@ class AdaptiveCadenceController:
             reason=self._change_reason(
                 previous_interval, self._current_interval, radar_promoted=radar_promoted
             ),
+            previous_level=previous_level,
         )
 
     def consider_escalation(
@@ -294,6 +321,7 @@ class AdaptiveCadenceController:
         is still slower than the held interval (e.g. ELEVATED's target of 180min
         while the interval is held at 30min) must not widen it back out.
         """
+        previous_level = self._current_level
         volume_level = self._volume_level(rate)
         level = self._promote(volume_level) if radar_alert else volume_level
         radar_promoted = level is not volume_level
@@ -309,6 +337,7 @@ class AdaptiveCadenceController:
                 new_interval=previous_interval,
                 level=self._current_level,
                 reason=None,
+                previous_level=previous_level,
             )
 
         self._current_level = level
@@ -325,4 +354,5 @@ class AdaptiveCadenceController:
             reason=self._change_reason(
                 previous_interval, self._current_interval, radar_promoted=radar_promoted
             ),
+            previous_level=previous_level,
         )
